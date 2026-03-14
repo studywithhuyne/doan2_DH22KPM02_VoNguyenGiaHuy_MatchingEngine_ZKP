@@ -23,3 +23,29 @@ pgdata/
 
 # --- SECRETS ---
 .env
+
+# top-level build artifacts
+/target/
+
+# native binaries & libs (Windows/Linux/macOS)
+*.exe
+*.dll
+*.pdb
+*.lib
+*.so
+*.dylib
+
+# zkp wasm outputs
+/zkp/pkg/
+*.wasm
+
+# env variants
+.env.*
+
+# coverage / profiler
+coverage/
+*.profraw
+*.profdata
+
+# cache
+.cache/
