@@ -1,9 +1,19 @@
 <script>
+  import { onMount, onDestroy } from "svelte";
+  import { orderBook } from "./stores/orderBookStore.js";
   import TopBar from "./components/layout/TopBar.svelte";
   import UserHeader from "./components/user/UserHeader.svelte";
   import OrderBookPanel from "./components/orderbook/OrderBookPanel.svelte";
   import TradeFormPanel from "./components/trade/TradeFormPanel.svelte";
   import ZkpVerifierPanel from "./components/zkp/ZkpVerifierPanel.svelte";
+
+  onMount(() => {
+    orderBook.connect();
+  });
+
+  onDestroy(() => {
+    orderBook.disconnect();
+  });
 </script>
 
 <main class="terminal-shell">
