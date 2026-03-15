@@ -3,6 +3,12 @@ name = "core"
 version = "0.1.0"
 edition = "2021"
 
+# Library target: exposes engine, api, db modules to benchmarks and future integration tests.
+# Named "matching_engine" to avoid ambiguity with the stdlib `core` crate.
+[lib]
+name = "matching_engine"
+path = "src/lib.rs"
+
 [[bin]]
 name = "core"
 path = "src/main.rs"

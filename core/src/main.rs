@@ -1,6 +1,5 @@
-mod api;
-mod db;
-mod engine;
+// Engine, api, and db modules are declared in lib.rs (matching_engine crate).
+// Import them here as needed when implementing Axum routes in API-01+.
 
 #[tokio::main]
 async fn main() {
