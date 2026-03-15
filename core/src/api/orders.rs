@@ -11,6 +11,12 @@
 // Persistence contract (from db/worker.rs):
 //   1. Send OrderPlaced for the taker BEFORE any TradeFilled that references it.
 //   2. Maker orders already exist in orders_log from their own OrderPlaced events.
+//
+// WebSocket broadcast contract:
+//   After every book mutation (place or cancel), fire:
+//     - WsEvent::TradeExecuted  for each generated fill (place_order only).
+//     - WsEvent::OrderbookUpdate with a fresh depth snapshot.
+//   Broadcast is synchronous (no .await) and fire-and-forget.
 
 use axum::{
     extract::{Path, State},
@@ -22,7 +28,11 @@ use serde::{Deserialize, Serialize};
 use std::str::FromStr;
 
 use crate::{
-    api::{auth::UserId, state::AppState},
+    api::{
+        auth::UserId,
+        state::AppState,
+        ws::{WsEvent, WsPriceLevel},
+    },
     db::worker::PersistenceEvent,
     engine::{Order, Side},
 };
@@ -65,7 +75,8 @@ pub struct PlaceOrderResponse {
 ///   3. Acquire engine write lock → match_order → Vec<Trade>, then release lock.
 ///   4. Fire OrderPlaced event (must arrive before TradeFilled in the channel).
 ///   5. Fire TradeFilled event per generated trade.
-///   6. Return 201 Created with { order_id, trades_count }.
+///   6. Broadcast TradeExecuted + OrderbookUpdate via WebSocket channel.
+///   7. Return 201 Created with { order_id, trades_count }.
 pub async fn place_order(
     State(state): State<AppState>,
     UserId(user_id): UserId,
@@ -105,7 +116,7 @@ pub async fn place_order(
         engine.match_order(order.clone())
             .map_err(|e| bad_request(&e.to_string()))?
     };
-    // Engine lock released here — async persistence happens below.
+    // Engine lock released here — async persistence and broadcasts happen below.
 
     // --- Persist: OrderPlaced MUST arrive before TradeFilled ---
     let _ = state.events.send(PersistenceEvent::OrderPlaced {
@@ -115,18 +126,26 @@ pub async fn place_order(
     }).await;
 
     let trades_count = trades.len();
-    for trade in trades {
-        // Look up maker's user_id from the in-memory registry.
-        // Falls back to 0 if the maker's order was somehow unregistered (safeguard).
+    for trade in &trades {
+        // Persist (clone Trade because PersistenceEvent takes ownership).
         let maker_user_id = state.get_order_user(trade.maker_order_id).unwrap_or(0);
         let _ = state.events.send(PersistenceEvent::TradeFilled {
-            trade,
+            trade:         trade.clone(),
             maker_user_id,
             taker_user_id: user_id,
             base_asset:    req.base_asset.clone(),
             quote_asset:   req.quote_asset.clone(),
         }).await;
+
+        // Broadcast individual fill to WebSocket clients (synchronous, non-blocking).
+        let _ = state.broadcast.send(WsEvent::TradeExecuted {
+            price:  trade.price.to_string(),
+            amount: trade.amount.to_string(),
+        });
     }
+
+    // Broadcast a fresh depth snapshot so clients see the updated book.
+    broadcast_orderbook_snapshot(&state);
 
     Ok((
         StatusCode::CREATED,
@@ -140,7 +159,8 @@ pub async fn place_order(
 ///   1. Check ownership via order_users map (O(1), no engine lock needed).
 ///   2. Acquire engine write lock → cancel_order, then release lock.
 ///   3. Fire OrderCancelled event.
-///   4. Return 204 No Content.
+///   4. Broadcast updated orderbook snapshot.
+///   5. Return 204 No Content.
 pub async fn cancel_order(
     State(state): State<AppState>,
     UserId(user_id): UserId,
@@ -169,12 +189,37 @@ pub async fn cancel_order(
     // --- Persist async ---
     let _ = state.events.send(PersistenceEvent::OrderCancelled { order_id }).await;
 
+    // --- Broadcast updated orderbook snapshot ---
+    broadcast_orderbook_snapshot(&state);
+
     Ok(StatusCode::NO_CONTENT)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Response helpers
+// Internal helpers
 // ─────────────────────────────────────────────────────────────────────────────
+
+/// Snapshot the engine depth and broadcast an OrderbookUpdate event.
+/// Acquires a read lock (not write), so this never contends with matching.
+/// Returns immediately if no WebSocket clients are connected.
+fn broadcast_orderbook_snapshot(state: &AppState) {
+    let (raw_bids, raw_asks) = {
+        let engine = state.engine.read();
+        engine.depth_snapshot(50)
+    };
+
+    let to_level = |(price, amount): (Decimal, Decimal)| WsPriceLevel {
+        price:  price.to_string(),
+        amount: amount.to_string(),
+    };
+
+    // Err(SendError) is returned only when there are no active receivers;
+    // this is normal during startup or when no clients are connected.
+    let _ = state.broadcast.send(WsEvent::OrderbookUpdate {
+        bids: raw_bids.into_iter().map(to_level).collect(),
+        asks: raw_asks.into_iter().map(to_level).collect(),
+    });
+}
 
 #[inline]
 fn bad_request(msg: &str) -> (StatusCode, Json<serde_json::Value>) {

@@ -10,10 +10,12 @@ use std::sync::{
 
 use parking_lot::{Mutex, RwLock};
 use sqlx::PgPool;
-use tokio::sync::mpsc;
+use tokio::sync::{broadcast, mpsc};
 
 use crate::db::worker::PersistenceEvent;
 use crate::engine::OrderBook;
+
+use super::ws::{WsEvent, BROADCAST_CAPACITY};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // AppState
@@ -40,16 +42,23 @@ pub struct AppState {
     /// Populated when an order is placed; entries are retained until server restart.
     /// Lock contention is minimal as it is only touched outside the engine lock.
     pub order_users: Arc<Mutex<HashMap<u64, u64>>>,
+
+    /// Broadcast sender for the WebSocket event bus.
+    /// Each WebSocket connection clones a Receiver via `subscribe()`.
+    /// `send` is synchronous and non-blocking; ignored if no active receivers.
+    pub broadcast: broadcast::Sender<WsEvent>,
 }
 
 impl AppState {
     pub fn new(db: PgPool, events: mpsc::Sender<PersistenceEvent>) -> Self {
+        let (broadcast_tx, _) = broadcast::channel(BROADCAST_CAPACITY);
         Self {
             engine:        Arc::new(RwLock::new(OrderBook::new())),
             next_order_id: Arc::new(AtomicU64::new(1)),
             db,
             events,
             order_users:   Arc::new(Mutex::new(HashMap::new())),
+            broadcast:     broadcast_tx,
         }
     }
 

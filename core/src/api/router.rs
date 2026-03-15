@@ -16,7 +16,7 @@ use axum::{
 };
 use serde_json::{json, Value};
 
-use super::{data, orders, state::AppState};
+use super::{data, orders, ws, state::AppState};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Public factory
@@ -33,8 +33,8 @@ pub fn build_router(state: AppState) -> Router {
         // API-04: market data and user balances
         .route("/api/orderbook", get(data::orderbook_handler))
         .route("/api/balances",  get(data::balances_handler))
-        // API-05:
-        //   .route("/ws", get(ws::handler))
+        // API-05: real-time WebSocket feed
+        .route("/ws", get(ws::ws_handler))
         .with_state(state)
 }
 
