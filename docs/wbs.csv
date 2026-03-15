@@ -5,8 +5,8 @@ Phase,Task_ID,Task_Name,Description,Status
 1. Core Engine (Rust),ENG-04,Logic: Add Order,"Thuật toán insert Order vào OrderBook, xử lý Price Level grouping",DONE
 1. Core Engine (Rust),ENG-05,Logic: Cancel Order,"Thuật toán tìm và xóa Order bằng HashMap lookup ở O(1), update BTreeMap",DONE
 1. Core Engine (Rust),ENG-06,Logic: Matching Core,"Vòng lặp FIFO Match. So sánh Taker Price với Maker Price. Cập nhật leftover amount",DONE
-1. Core Engine (Rust),ENG-07,Unit Tests: Matching,"Viết #[test] cho Full match, Partial match, Walking the book (Taker cắn nhiều Maker)",TODO
-1. Core Engine (Rust),ENG-08,Proptest: Fuzzing,"Dùng proptest sinh hàng ngàn lệnh random, assert tổng số dư tài sản (Base + Quote) không đổi",TODO
+1. Core Engine (Rust),ENG-07,Unit Tests: Matching,"Viết #[test] cho Full match, Partial match, Walking the book (Taker cắn nhiều Maker)",DONE
+1. Core Engine (Rust),ENG-08,Proptest: Fuzzing,"Dùng proptest sinh hàng ngàn lệnh random, assert tổng số dư tài sản (Base + Quote) không đổi",DONE
 1. Core Engine (Rust),ENG-09,Benchmark: Criterion,"Setup criterion, đo lường latency của hàm match_order. Mục tiêu: < 10 micro-seconds",TODO
 2. Database (Postgres),DB-01,Docker Compose DB,"Setup Postgres container, map port 5432, tạo init db script",TODO
 2. Database (Postgres),DB-02,Schema Migrations,"Viết file .sql tạo bảng: users, assets, balances, orders_log, trades_log",TODO

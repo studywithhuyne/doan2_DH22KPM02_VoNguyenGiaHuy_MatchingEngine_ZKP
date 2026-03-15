@@ -634,4 +634,271 @@ mod tests {
         assert_eq!(trades.len(), 1);
         assert_eq!(trades[0].price, dec!(100)); // maker's price
     }
+
+    // ─── ENG-07: FIFO during matching ─────────────────────────────────────
+
+    #[test]
+    fn buy_taker_matches_makers_at_same_level_in_fifo_order() {
+        // Three sellers all at price 100 placed in order A→B→C.
+        // Taker buys 7 → A(qty=3) filled first, B(qty=3) filled second,
+        // C partially filled (1 of 3), C must remain at front of queue.
+        let mut book = OrderBook::new();
+        book.add_order(sell(1, dec!(100), dec!(3))).unwrap(); // maker A
+        book.add_order(sell(2, dec!(100), dec!(3))).unwrap(); // maker B
+        book.add_order(sell(3, dec!(100), dec!(3))).unwrap(); // maker C
+
+        let trades = book.match_order(buy(10, dec!(100), dec!(7))).unwrap();
+
+        assert_eq!(trades.len(), 3);
+        assert_eq!(trades[0].maker_order_id, 1); // A first
+        assert_eq!(trades[0].amount, dec!(3));
+        assert_eq!(trades[1].maker_order_id, 2); // B second
+        assert_eq!(trades[1].amount, dec!(3));
+        assert_eq!(trades[2].maker_order_id, 3); // C third — partial
+        assert_eq!(trades[2].amount, dec!(1));
+
+        // C still resting at the front of the queue with 2 remaining
+        let queue = book.asks.get(&dec!(100)).unwrap();
+        assert_eq!(queue.len(), 1);
+        assert_eq!(queue.front().unwrap().id, 3);
+        assert_eq!(queue.front().unwrap().remaining, dec!(2));
+    }
+
+    #[test]
+    fn sell_taker_matches_makers_at_same_level_in_fifo_order() {
+        // Three buyers all at price 100 placed in order A→B→C.
+        // Taker sells 7 → A(qty=3) filled first, B(qty=3) second,
+        // C partially filled (1 of 3), C remains at front.
+        let mut book = OrderBook::new();
+        book.add_order(buy(1, dec!(100), dec!(3))).unwrap(); // maker A
+        book.add_order(buy(2, dec!(100), dec!(3))).unwrap(); // maker B
+        book.add_order(buy(3, dec!(100), dec!(3))).unwrap(); // maker C
+
+        let trades = book.match_order(sell(10, dec!(100), dec!(7))).unwrap();
+
+        assert_eq!(trades.len(), 3);
+        assert_eq!(trades[0].maker_order_id, 1);
+        assert_eq!(trades[0].amount, dec!(3));
+        assert_eq!(trades[1].maker_order_id, 2);
+        assert_eq!(trades[1].amount, dec!(3));
+        assert_eq!(trades[2].maker_order_id, 3);
+        assert_eq!(trades[2].amount, dec!(1));
+
+        let queue = book.bids.get(&Reverse(dec!(100))).unwrap();
+        assert_eq!(queue.front().unwrap().remaining, dec!(2));
+    }
+
+    // ─── ENG-07: full book exhaustion ─────────────────────────────────────
+
+    #[test]
+    fn buy_taker_exhausts_entire_ask_book_and_rests_with_leftover() {
+        // Asks: 5@100, 5@101.  Taker buys 20@102 → consumes both levels (10
+        // total), 10 remaining can't match and rests as a new bid @ 102.
+        let mut book = OrderBook::new();
+        book.add_order(sell(1, dec!(100), dec!(5))).unwrap();
+        book.add_order(sell(2, dec!(101), dec!(5))).unwrap();
+
+        let trades = book.match_order(buy(10, dec!(102), dec!(20))).unwrap();
+
+        assert_eq!(trades.len(), 2);
+        let filled: Decimal = trades.iter().map(|t| t.amount).sum();
+        assert_eq!(filled, dec!(10));
+
+        // Ask side empty; taker's leftover rests as a bid
+        assert!(book.best_ask().is_none());
+        assert_eq!(book.best_bid(), Some(dec!(102)));
+        assert_eq!(book.len(), 1);
+    }
+
+    // ─── ENG-07: partially-filled maker can be cancelled ──────────────────
+
+    #[test]
+    fn partially_filled_maker_can_be_cancelled() {
+        // Maker sells 10@100. Taker buys 3 → maker has 7 remaining.
+        // Maker is then cancelled and the returned order shows remaining=7.
+        let mut book = OrderBook::new();
+        book.add_order(sell(1, dec!(100), dec!(10))).unwrap();
+        book.match_order(buy(2, dec!(100), dec!(3))).unwrap();
+
+        let cancelled = book.cancel_order(1).unwrap();
+        assert_eq!(cancelled.remaining, dec!(7)); // not original amount=10
+        assert!(book.is_empty());
+    }
+
+    // ─── ENG-07: conservation of quantity ─────────────────────────────────
+
+    #[test]
+    fn sum_of_trade_amounts_equals_taker_filled_quantity() {
+        // Taker buys 12 against three separate ask levels (5+5+5).
+        // The sum of all trade amounts must equal 12 (taker fully filled).
+        let mut book = OrderBook::new();
+        book.add_order(sell(1, dec!(100), dec!(5))).unwrap();
+        book.add_order(sell(2, dec!(101), dec!(5))).unwrap();
+        book.add_order(sell(3, dec!(102), dec!(5))).unwrap();
+
+        let trades = book.match_order(buy(10, dec!(102), dec!(12))).unwrap();
+
+        let total_traded: Decimal = trades.iter().map(|t| t.amount).sum();
+        assert_eq!(total_traded, dec!(12));
+    }
+
+    // ─── ENG-07: order_map consistency ────────────────────────────────────
+
+    #[test]
+    fn order_map_len_stays_consistent_through_add_match_cancel() {
+        let mut book = OrderBook::new();
+
+        // Add 4 resting orders
+        book.add_order(sell(1, dec!(100), dec!(5))).unwrap();
+        book.add_order(sell(2, dec!(101), dec!(5))).unwrap();
+        book.add_order(buy(3, dec!(99), dec!(5))).unwrap();
+        book.add_order(buy(4, dec!(98), dec!(5))).unwrap();
+        assert_eq!(book.len(), 4);
+
+        // match_order: taker buys 5@100 → fully fills maker 1 (removed),
+        //              taker is filled, not added to book.
+        book.match_order(buy(5, dec!(100), dec!(5))).unwrap();
+        assert_eq!(book.len(), 3); // 1, 2, 3, 4 minus 1 = 3 remaining
+
+        // Cancel one resting bid
+        book.cancel_order(3).unwrap();
+        assert_eq!(book.len(), 2); // 2 and 4 remain
+    }
+
+    // ─── ENG-07: decimal precision ────────────────────────────────────────
+
+    #[test]
+    fn fractional_decimal_amounts_fill_correctly() {
+        // Maker sells 0.005 @ 100.50. Taker buys 0.005 @ 100.50.
+        // Exact fill with fractional decimals — no rounding loss.
+        let mut book = OrderBook::new();
+        book.add_order(sell(1, dec!(100.50), dec!(0.005))).unwrap();
+
+        let trades = book.match_order(buy(2, dec!(100.50), dec!(0.005))).unwrap();
+
+        assert_eq!(trades.len(), 1);
+        assert_eq!(trades[0].amount, dec!(0.005));
+        assert_eq!(trades[0].price, dec!(100.50));
+        assert!(book.is_empty());
+    }
+}
+
+/// Property-based tests (ENG-08): generate thousands of random order sequences
+/// and assert the conservation invariant — no quantity is ever created or lost.
+#[cfg(test)]
+mod proptest_suite {
+    use super::*;
+    use proptest::prelude::*;
+    use rust_decimal::Decimal;
+    use rust_decimal_macros::dec;
+
+    /// Sum the `remaining` field of every live order across both sides of the book.
+    fn total_remaining_in_book(book: &OrderBook) -> Decimal {
+        let bid_rem: Decimal = book
+            .bids
+            .values()
+            .flat_map(|q| q.iter())
+            .map(|o| o.remaining)
+            .sum();
+        let ask_rem: Decimal = book
+            .asks
+            .values()
+            .flat_map(|q| q.iter())
+            .map(|o| o.remaining)
+            .sum();
+        bid_rem + ask_rem
+    }
+
+    proptest! {
+        /// Conservation of quantity invariant:
+        ///
+        /// For any sequence of match_order calls, the following must always hold:
+        ///
+        ///   sum(order.amount) == 2 × sum(trade.amount) + sum(remaining in book)
+        ///
+        /// Rationale: each trade decrements `remaining` on BOTH maker and taker
+        /// by exactly fill_qty.  Summing all initial amounts and subtracting all
+        /// matched amounts (counted once per side) leaves only the resting quantity.
+        #[test]
+        fn no_quantity_created_or_destroyed(
+            input in proptest::collection::vec(
+                // (is_buy, price ∈ [90, 110], amount ∈ [1, 10])
+                // Prices intentionally overlap to guarantee frequent matches.
+                (any::<bool>(), 90u32..=110u32, 1u32..=10u32),
+                1..=100
+            )
+        ) {
+            let mut book = OrderBook::new();
+            let mut total_initial = Decimal::ZERO;
+            let mut total_traded  = Decimal::ZERO;
+
+            for (i, (is_buy, price_raw, amount_raw)) in input.iter().enumerate() {
+                let id     = (i + 1) as u64;
+                let price  = Decimal::from(*price_raw);
+                let amount = Decimal::from(*amount_raw);
+                let side   = if *is_buy { Side::Buy } else { Side::Sell };
+
+                total_initial += amount;
+
+                // Sequential IDs guarantee no DuplicateOrderId.
+                // price >= 90 > 0 and amount >= 1 > 0, so no validation errors.
+                let order  = Order::new(id, 1, side, price, amount);
+                let trades = book.match_order(order)
+                    .expect("randomly generated order must not produce EngineError");
+
+                for trade in &trades {
+                    // Every fill must be a positive quantity.
+                    prop_assert!(
+                        trade.amount > Decimal::ZERO,
+                        "trade amount must be positive, got {}",
+                        trade.amount
+                    );
+                    total_traded += trade.amount;
+                }
+            }
+
+            let total_remaining = total_remaining_in_book(&book);
+
+            // Core conservation invariant.
+            prop_assert_eq!(
+                total_initial,
+                total_traded * dec!(2) + total_remaining,
+                "conservation violated — initial={} 2×traded={} remaining={}",
+                total_initial,
+                total_traded * dec!(2),
+                total_remaining
+            );
+
+            // Internal consistency: order_map must stay in sync with BTreeMap queues.
+            let queue_total: usize = book.bids.values().map(|q| q.len()).sum::<usize>()
+                + book.asks.values().map(|q| q.len()).sum::<usize>();
+            prop_assert_eq!(
+                book.len(),
+                queue_total,
+                "order_map out of sync with price-level queues"
+            );
+        }
+
+        /// The engine must never panic for any sequence of valid orders.
+        /// This test is a lighter-weight sanity check complementing the
+        /// conservation test above.
+        #[test]
+        fn engine_never_panics_on_valid_orders(
+            input in proptest::collection::vec(
+                (any::<bool>(), 1u32..=200u32, 1u32..=50u32),
+                0..=200
+            )
+        ) {
+            let mut book = OrderBook::new();
+            for (i, (is_buy, price_raw, amount_raw)) in input.iter().enumerate() {
+                let id     = (i + 1) as u64;
+                let price  = Decimal::from(*price_raw);
+                let amount = Decimal::from(*amount_raw);
+                let side   = if *is_buy { Side::Buy } else { Side::Sell };
+                let order  = Order::new(id, 1, side, price, amount);
+                let _      = book.match_order(order);
+            }
+            // If we reach here without a panic, the test passes.
+        }
+    }
 }
