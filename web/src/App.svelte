@@ -1,4 +1,4 @@
-<script>
+<script lang="ts">
   import { onMount, onDestroy } from "svelte";
   import { orderBook } from "./stores/orderBookStore.js";
   import TopBar from "./components/layout/TopBar.svelte";

@@ -1,4 +1,4 @@
-<script>
+<script lang="ts">
   import { connectionState } from "../../stores/appStore.js";
 </script>
 

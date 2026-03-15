@@ -25,7 +25,7 @@ Phase,Task_ID,Task_Name,Description,Status
 4. ZKP Solvency,ZKP-06,Wasm Verifier,"Tạo project wasm-pack. Viết hàm verify_proof nhận file .proof và public_inputs, trả về boolean",TODO
 5. Frontend (Svelte),UI-01,Vite SPA Init,"Khởi tạo project Vite + Svelte, setup TailwindCSS config, tạo layout Dark Mode",DONE
 5. Frontend (Svelte),UI-02,Store: WebSocket,"Tạo Svelte writable store kết nối Ws://, hứng data, update local OrderBook object",DONE
-5. Frontend (Svelte),UI-03,Component: OrderBook,"Vẽ UI Bids (chữ xanh) và Asks (chữ đỏ), render thanh Depth/Size background",TODO
+5. Frontend (Svelte),UI-03,Component: OrderBook,"Vẽ UI Bids (chữ xanh) và Asks (chữ đỏ), render thanh Depth/Size background",DONE
 5. Frontend (Svelte),UI-04,Component: Trade Form,"Form Input Price, Amount. Nút Buy (màu xanh), Sell (màu đỏ). Gọi REST POST /api/orders",TODO
 5. Frontend (Svelte),UI-05,Component: User Header,"Dropdown chọn User ID giả lập (VD: Alice - ID 1, Bob - ID 2) để gán vào x-user-id header",TODO
 5. Frontend (Svelte),UI-06,Component: ZK Verifier,"Giao diện upload/fetch file proof. Gọi module Wasm (wasm-bindgen). Hiển thị kết quả Valid/Invalid",TODO
