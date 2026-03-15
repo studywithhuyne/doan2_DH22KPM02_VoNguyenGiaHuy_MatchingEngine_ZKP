@@ -22,7 +22,7 @@ Phase,Task_ID,Task_Name,Description,Status
 4. ZKP Solvency,ZKP-03,Merkle Tree Builder,"Thuật toán build cây từ dưới lên (Bottom-up). Tính Merkle Root",DONE
 4. ZKP Solvency,ZKP-04,ZK Circuit Design,"Định nghĩa ráng buộc (Constraints): Hash hợp lệ, Sum = Left + Right, không tràn số (Overflow)",DONE
 4. ZKP Solvency,ZKP-05,Prover API,"API GET /api/zkp/proof. Generate bằng chứng (Proof) và Merkle Path cho user đang request",DONE
-4. ZKP Solvency,ZKP-06,Wasm Verifier,"Tạo project wasm-pack. Viết hàm verify_proof nhận file .proof và public_inputs, trả về boolean",TODO
+4. ZKP Solvency,ZKP-06,Wasm Verifier,"Tạo project wasm-pack. Viết hàm verify_proof nhận file .proof và public_inputs, trả về boolean",DONE
 5. Frontend (Svelte),UI-01,Vite SPA Init,"Khởi tạo project Vite + Svelte, setup TailwindCSS config, tạo layout Dark Mode",TODO
 5. Frontend (Svelte),UI-02,Store: WebSocket,"Tạo Svelte writable store kết nối Ws://, hứng data, update local OrderBook object",TODO
 5. Frontend (Svelte),UI-03,Component: OrderBook,"Vẽ UI Bids (chữ xanh) và Asks (chữ đỏ), render thanh Depth/Size background",TODO
