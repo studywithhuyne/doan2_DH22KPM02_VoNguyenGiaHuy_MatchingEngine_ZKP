@@ -2,7 +2,7 @@ const DEFAULT_HEADERS = {
   "Content-Type": "application/json",
 };
 
-export async function apiGet(path, userId = 1) {
+export async function apiGet<T = unknown>(path: string, userId = 1): Promise<T> {
   const response = await fetch(path, {
     method: "GET",
     headers: {
@@ -15,5 +15,5 @@ export async function apiGet(path, userId = 1) {
     throw new Error(`GET ${path} failed with status ${response.status}`);
   }
 
-  return response.json();
+  return response.json() as Promise<T>;
 }
