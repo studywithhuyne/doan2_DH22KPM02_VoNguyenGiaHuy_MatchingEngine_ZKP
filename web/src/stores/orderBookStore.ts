@@ -27,7 +27,7 @@ type OrderBookState = {
 
 // ── Backend WsEvent format (matches core/src/api/ws.rs) ──────────────────────
 // {"type": "orderbook_update", "data": {"bids": [{"price":"..","amount":".."}], "asks": [...]}}
-// {"type": "trade_executed",   "data": {"price": "..", "amount": ".."}}
+// {"type": "recent_trade",     "data": {"price": "..", "amount": ".."}}
 type WsApiPriceLevel = { price: string; amount: string };
 
 type WsOrderbookUpdate = {
@@ -35,12 +35,12 @@ type WsOrderbookUpdate = {
   data: { bids: WsApiPriceLevel[]; asks: WsApiPriceLevel[] };
 };
 
-type WsTradeExecuted = {
-  type: "trade_executed";
+type WsRecentTrade = {
+  type: "recent_trade" | "trade_executed";
   data: { price: string; amount: string };
 };
 
-type WsApiMessage = WsOrderbookUpdate | WsTradeExecuted;
+type WsApiMessage = WsOrderbookUpdate | WsRecentTrade;
 
 const EMPTY_STATE: OrderBookState = {
   bids: [],
@@ -111,8 +111,8 @@ function createOrderBookStore() {
       return;
     }
 
-    // trade_executed: single fill event
-    if (msg.type === "trade_executed") {
+    // recent_trade: single fill event
+    if (msg.type === "recent_trade" || msg.type === "trade_executed") {
       const trade: Trade = {
         price:  parseFloat(msg.data.price),
         amount: parseFloat(msg.data.amount),

@@ -214,7 +214,7 @@ pub async fn place_order(
         }).await;
 
         // Broadcast individual fill to WebSocket clients (synchronous, non-blocking).
-        let _ = state.broadcast.send(WsEvent::TradeExecuted {
+        let _ = state.broadcast.send(WsEvent::RecentTrade {
             symbol: symbol.clone(),
             price:  trade.price.to_string(),
             amount: trade.amount.to_string(),
