@@ -2,10 +2,11 @@
 // Read-only REST handlers: public market data and authenticated user data.
 //
 // Routes (registered in router.rs):
-//   GET /api/orderbook     — top-50 depth snapshot (public, no auth required)
-//   GET /api/balances      — balance per asset for the authenticated user (requires x-user-id)
-//   GET /api/orders/open   — open/partial orders for the authenticated user (requires x-user-id)
-//   GET /api/trades/recent — last 50 trades globally (public, no auth required)
+//   GET /api/orderbook          — top-50 depth snapshot (public, ?symbol=BTC_USDT)
+//   GET /api/balances           — balance per asset for the authenticated user (requires x-user-id)
+//   GET /api/orders/open        — open/partial orders for the authenticated user (requires x-user-id)
+//   GET /api/trades/recent      — last 50 trades globally (public, no auth required)
+//   GET /api/candles            — OHLCV candle data (?symbol=BTC_USDT&interval=1m&limit=100)
 //
 // Serialization:
 //   price, amount, available, locked are all returned as Decimal strings (not
@@ -13,20 +14,42 @@
 //   round-trip loss on the client side.
 
 use axum::{
-    extract::State,
+    extract::{Query, State},
     http::StatusCode,
     Json,
 };
 use rust_decimal::Decimal;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::{
     api::{auth::UserId, state::AppState},
-    db::schema::{Balance, OrderLog, TradeLog},
+    db::schema::{Balance, Candle, OrderLog, TradeLog},
 };
 
 /// Number of price levels returned per side in the orderbook snapshot.
 const ORDERBOOK_DEPTH: usize = 50;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Query parameter types
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Query params for GET /api/orderbook.
+#[derive(Deserialize)]
+pub struct OrderbookQuery {
+    /// Trading pair symbol, e.g. "BTC_USDT". Defaults to "BTC_USDT" if omitted.
+    pub symbol: Option<String>,
+}
+
+/// Query params for GET /api/candles.
+#[derive(Deserialize)]
+pub struct CandlesQuery {
+    /// Trading pair symbol, e.g. "BTC_USDT".
+    pub symbol:   String,
+    /// Candlestick interval: "1m", "5m", "1h", or "1d". Defaults to "1m".
+    pub interval: Option<String>,
+    /// Number of candles to return (max 500). Defaults to 100.
+    pub limit:    Option<i64>,
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Response types
@@ -80,20 +103,35 @@ pub struct RecentTradeDto {
     pub executed_at: String,
 }
 
+/// One OHLCV candle returned by GET /api/candles.
+#[derive(Serialize)]
+pub struct CandleDto {
+    /// Open timestamp in milliseconds (Unix epoch), e.g. 1700000000000.
+    pub time:   i64,
+    pub open:   String,
+    pub high:   String,
+    pub low:    String,
+    pub close:  String,
+    pub volume: String,
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Handlers
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// GET /api/orderbook — public depth snapshot from the in-memory engine.
+/// GET /api/orderbook?symbol=BTC_USDT — public depth snapshot from the in-memory engine.
 ///
 /// Acquires a read lock, collects up to 50 levels per side, then releases.
 /// No database query — latency is dominated by the JSON serialization.
+/// Symbol defaults to "BTC_USDT" if the query param is omitted.
 pub async fn orderbook_handler(
     State(state): State<AppState>,
+    Query(params): Query<OrderbookQuery>,
 ) -> Json<OrderBookResponse> {
+    let symbol = params.symbol.as_deref().unwrap_or("BTC_USDT");
     let (raw_bids, raw_asks) = {
         let engine = state.engine.read();
-        engine.depth_snapshot(ORDERBOOK_DEPTH)
+        engine.depth_snapshot(symbol, ORDERBOOK_DEPTH)
     };
 
     let to_dto = |(price, amount): (Decimal, Decimal)| PriceLevelDto {
@@ -211,6 +249,52 @@ pub async fn recent_trades_handler(
             base_asset:  t.base_asset,
             quote_asset: t.quote_asset,
             executed_at: t.executed_at.to_rfc3339(),
+        })
+        .collect();
+
+    Ok(Json(dtos))
+}
+
+/// GET /api/candles?symbol=BTC_USDT&interval=1m&limit=100
+///
+/// Returns OHLCV candlestick data from the `candles` table.
+/// Data is populated asynchronously by the persistence worker after each trade fill.
+/// Candles are returned in descending open_time order (newest first).
+pub async fn candles_handler(
+    State(state): State<AppState>,
+    Query(params): Query<CandlesQuery>,
+) -> Result<Json<Vec<CandleDto>>, (StatusCode, Json<serde_json::Value>)> {
+    let interval  = params.interval.as_deref().unwrap_or("1m");
+    let limit     = params.limit.unwrap_or(100).clamp(1, 500);
+
+    let rows: Vec<Candle> = sqlx::query_as(
+        "SELECT symbol, interval, open_time, open, high, low, close, volume
+         FROM candles
+         WHERE symbol = $1 AND interval = $2
+         ORDER BY open_time DESC
+         LIMIT $3",
+    )
+    .bind(&params.symbol)
+    .bind(interval)
+    .bind(limit)
+    .fetch_all(&state.db)
+    .await
+    .map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": format!("database error: {e}") })),
+        )
+    })?;
+
+    let dtos = rows
+        .into_iter()
+        .map(|c| CandleDto {
+            time:   c.open_time.timestamp_millis(),
+            open:   c.open.to_string(),
+            high:   c.high.to_string(),
+            low:    c.low.to_string(),
+            close:  c.close.to_string(),
+            volume: c.volume.to_string(),
         })
         .collect();
 

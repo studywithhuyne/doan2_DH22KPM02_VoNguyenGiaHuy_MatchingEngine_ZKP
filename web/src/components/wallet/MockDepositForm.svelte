@@ -51,7 +51,7 @@
         </select>
       </div>
 
-      <div class="flex-[2]">
+      <div class="flex-2">
         <label for="deposit-amount" class="block text-[10px] font-medium tracking-widest text-slate-500 uppercase mb-1">Amount</label>
         <input
           id="deposit-amount"

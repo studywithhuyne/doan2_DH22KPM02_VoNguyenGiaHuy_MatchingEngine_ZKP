@@ -38,6 +38,8 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/deposit",       post(wallet::deposit_handler))
         .route("/api/trades/recent", get(data::recent_trades_handler))
         .route("/api/trades/user",   get(wallet::user_trades_handler))
+        // OHLCV candlestick data for the chart
+        .route("/api/candles",       get(data::candles_handler))
         // ZKP-05: solvency proof package for authenticated user
         .route("/api/zkp/proof", get(zkp::proof_handler))
         // API-05: real-time WebSocket feed

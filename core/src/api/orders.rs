@@ -105,10 +105,12 @@ pub async fn place_order(
 
     // --- Allocate ID and build Order ---
     let order_id = state.alloc_order_id();
-    let order    = Order::new(order_id, user_id, side, price, amount);
+    // Derive canonical symbol from base/quote pair (e.g. "BTC_USDT").
+    let symbol   = format!("{}_{}", req.base_asset, req.quote_asset);
+    let order    = Order::new(order_id, user_id, &symbol, side, price, amount);
 
-    // Register owner before matching so TradeFilled lookup always succeeds.
-    state.register_order_user(order_id, user_id);
+    // Register owner + symbol before matching so cancel and TradeFilled lookup always succeed.
+    state.register_order_user(order_id, user_id, symbol.clone());
 
     // --- Match (sync, engine write-locked, no async I/O inside) ---
     let trades = {
@@ -128,7 +130,9 @@ pub async fn place_order(
     let trades_count = trades.len();
     for trade in &trades {
         // Persist (clone Trade because PersistenceEvent takes ownership).
-        let maker_user_id = state.get_order_user(trade.maker_order_id).unwrap_or(0);
+        let maker_user_id = state.get_order_user(trade.maker_order_id)
+            .map(|(uid, _)| uid)
+            .unwrap_or(0);
         let _ = state.events.send(PersistenceEvent::TradeFilled {
             trade:         trade.clone(),
             maker_user_id,
@@ -140,13 +144,14 @@ pub async fn place_order(
 
         // Broadcast individual fill to WebSocket clients (synchronous, non-blocking).
         let _ = state.broadcast.send(WsEvent::TradeExecuted {
+            symbol: symbol.clone(),
             price:  trade.price.to_string(),
             amount: trade.amount.to_string(),
         });
     }
 
     // Broadcast a fresh depth snapshot so clients see the updated book.
-    broadcast_orderbook_snapshot(&state);
+    broadcast_orderbook_snapshot(&state, &symbol);
 
     Ok((
         StatusCode::CREATED,
@@ -168,7 +173,7 @@ pub async fn cancel_order(
     Path(order_id): Path<u64>,
 ) -> Result<StatusCode, (StatusCode, Json<serde_json::Value>)> {
     // --- Ownership check (no lock needed — order_users is a separate Mutex) ---
-    let owner_id = state
+    let (owner_id, symbol) = state
         .get_order_user(order_id)
         .ok_or_else(|| not_found("order not found"))?;
 
@@ -183,7 +188,7 @@ pub async fn cancel_order(
     {
         let mut engine = state.engine.write();
         engine
-            .cancel_order(order_id)
+            .cancel_order(&symbol, order_id)
             .map_err(|_| not_found("order not found or already filled"))?;
     }
 
@@ -191,7 +196,7 @@ pub async fn cancel_order(
     let _ = state.events.send(PersistenceEvent::OrderCancelled { order_id }).await;
 
     // --- Broadcast updated orderbook snapshot ---
-    broadcast_orderbook_snapshot(&state);
+    broadcast_orderbook_snapshot(&state, &symbol);
 
     Ok(StatusCode::NO_CONTENT)
 }
@@ -200,13 +205,13 @@ pub async fn cancel_order(
 // Internal helpers
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Snapshot the engine depth and broadcast an OrderbookUpdate event.
+/// Snapshot the engine depth for `symbol` and broadcast an OrderbookUpdate event.
 /// Acquires a read lock (not write), so this never contends with matching.
 /// Returns immediately if no WebSocket clients are connected.
-fn broadcast_orderbook_snapshot(state: &AppState) {
+fn broadcast_orderbook_snapshot(state: &AppState, symbol: &str) {
     let (raw_bids, raw_asks) = {
         let engine = state.engine.read();
-        engine.depth_snapshot(50)
+        engine.depth_snapshot(symbol, 50)
     };
 
     let to_level = |(price, amount): (Decimal, Decimal)| WsPriceLevel {
@@ -217,8 +222,9 @@ fn broadcast_orderbook_snapshot(state: &AppState) {
     // Err(SendError) is returned only when there are no active receivers;
     // this is normal during startup or when no clients are connected.
     let _ = state.broadcast.send(WsEvent::OrderbookUpdate {
-        bids: raw_bids.into_iter().map(to_level).collect(),
-        asks: raw_asks.into_iter().map(to_level).collect(),
+        symbol: symbol.to_owned(),
+        bids:   raw_bids.into_iter().map(to_level).collect(),
+        asks:   raw_asks.into_iter().map(to_level).collect(),
     });
 }
 
