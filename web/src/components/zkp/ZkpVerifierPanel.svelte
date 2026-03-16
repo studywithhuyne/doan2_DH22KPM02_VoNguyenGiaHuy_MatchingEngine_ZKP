@@ -1,19 +1,44 @@
 <script lang="ts">
   import { selectedUserId } from "../../stores/appStore";
+  import { loadWasmVerifier, zkpVerify } from "../../lib/zkp-wasm";
+
+  type ProofPayload = {
+    user_id: number;
+    leaf_balance: string;
+    root_hash: string;
+    root_balance: string;
+    merkle_path: unknown[];
+    public_inputs?: {
+      expected_root_hash: string;
+      expected_root_balance: string;
+      expected_user_id?: number;
+      expected_cold_wallet_assets?: string;
+    };
+    solvency?: {
+      total_liabilities: string;
+      cold_wallet_assets: string;
+      liabilities_leq_assets: boolean;
+    };
+  };
 
   let proofData = $state("");
   let status = $state<"idle" | "fetching" | "verifying" | "valid" | "invalid" | "error">("idle");
   let errorMsg = $state("");
   let assetFilter = $state("USDT");
+  let coldWalletAssets = $state("1000000");
+  let dropActive = $state(false);
 
   // ── Fetch proof from backend (/api/zkp/proof) ─────────────────────────────
   async function fetchProofFromServer() {
     status = "fetching";
     errorMsg = "";
     try {
-      const res = await fetch(`/api/zkp/proof?asset=${encodeURIComponent(assetFilter)}`, {
+      const res = await fetch(
+        `/api/zkp/proof?asset=${encodeURIComponent(assetFilter)}&cold_wallet_assets=${encodeURIComponent(coldWalletAssets)}`,
+        {
         headers: { "x-user-id": $selectedUserId.toString() }
-      });
+        }
+      );
       if (!res.ok) {
         const body = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
         throw new Error(body.error || `Server returned ${res.status}`);
@@ -48,7 +73,31 @@
     input.value = "";
   }
 
-  // ── Run verifier (client-side) ────────────────────────────────────────────
+  async function parseAndSetProofFile(file: File) {
+    const text = await file.text();
+    proofData = text;
+    status = "idle";
+    errorMsg = "";
+  }
+
+  async function handleDrop(event: DragEvent) {
+    event.preventDefault();
+    dropActive = false;
+
+    const file = event.dataTransfer?.files?.[0];
+    if (!file) {
+      return;
+    }
+
+    try {
+      await parseAndSetProofFile(file);
+    } catch {
+      status = "error";
+      errorMsg = "Failed to read dropped file.";
+    }
+  }
+
+  // ── Run verifier (client-side WASM) ─────────────────────────────────────
   async function verifyProof() {
     if (!proofData.trim()) {
       errorMsg = "Please fetch, paste, or upload a ZK Proof JSON first";
@@ -56,38 +105,59 @@
       return;
     }
 
+    // Parse and validate proof structure before invoking WASM.
+    let parsed: ProofPayload;
+    try {
+      parsed = JSON.parse(proofData);
+    } catch {
+      status = "error";
+      errorMsg = "Invalid JSON — could not parse proof data";
+      return;
+    }
+
+    if (
+      typeof parsed.user_id !== "number" ||
+      typeof parsed.leaf_balance !== "string" ||
+      typeof parsed.root_hash !== "string" ||
+      typeof parsed.root_balance !== "string" ||
+      !Array.isArray(parsed.merkle_path)
+    ) {
+      status = "invalid";
+      errorMsg = "Proof JSON missing required fields: user_id, leaf_balance, root_hash, root_balance, merkle_path";
+      return;
+    }
+
     status = "verifying";
     errorMsg = "";
 
     try {
-      // TODO: replace with real wasm-bindgen call:
-      // const wasm = await import("zkp-verifier-wasm");
-      // const result = wasm.verify_proof(proofData, publicInputsJson);
-      await new Promise(r => setTimeout(r, 1200));
+      // Load the WASM module (idempotent — cached after first call).
+      // Requires /wasm/zkp.js and /wasm/zkp_bg.wasm in the public/ directory.
+      await loadWasmVerifier();
 
-      // Structural validation: check required fields from /api/zkp/proof response
-      const parsed = JSON.parse(proofData);
-      const isValidStructure =
-        typeof parsed.user_id      === "number" &&
-        typeof parsed.leaf_balance === "string" &&
-        typeof parsed.root_hash    === "string" &&
-        typeof parsed.root_balance === "string" &&
-        Array.isArray(parsed.merkle_path);
+      // Prefer server-provided public inputs bundled with the proof package.
+      // Fallback keeps compatibility with legacy proof JSON payloads.
+      const publicInputsJson = parsed.public_inputs
+        ? JSON.stringify(parsed.public_inputs)
+        : JSON.stringify({
+            expected_root_hash: parsed.root_hash,
+            expected_root_balance: parsed.root_balance,
+            expected_user_id: parsed.user_id,
+            expected_cold_wallet_assets: coldWalletAssets,
+          });
 
-      if (isValidStructure) {
-        status = "valid";
-      } else {
-        status = "invalid";
-        errorMsg = "Proof JSON missing required fields (user_id, leaf_balance, root_hash, root_balance, merkle_path)";
+      // Cryptographic verification: re-computes the Merkle path using Poseidon
+      // hash (BN-254 field) from the leaf up to the root and checks all hashes
+      // and balance sums match the declared values.
+      const result = zkpVerify(proofData, publicInputsJson);
+
+      status = result ? "valid" : "invalid";
+      if (!result) {
+        errorMsg = "Merkle path verification failed — the proof is cryptographically invalid";
       }
     } catch (err: any) {
-      if (err instanceof SyntaxError) {
-        status = "error";
-        errorMsg = "Invalid JSON — could not parse proof data";
-      } else {
-        status = "error";
-        errorMsg = err.message || "WASM panic or internal error";
-      }
+      status = "error";
+      errorMsg = err.message ?? "WASM load error — ensure wasm-pack build has been run (see README)";
     }
   }
 </script>
@@ -111,6 +181,12 @@
         <option value="USDT">USDT</option>
         <option value="BTC">BTC</option>
       </select>
+      <input
+        type="text"
+        bind:value={coldWalletAssets}
+        placeholder="Cold wallet assets"
+        class="w-40 rounded border border-slate-700/80 bg-slate-900/80 px-2 py-1.5 text-xs text-slate-200 outline-none focus:border-fuchsia-500/50"
+      />
       <button
         type="button"
         disabled={status === "fetching" || status === "verifying"}
@@ -134,9 +210,23 @@
       <textarea
         id="proof-data"
         bind:value={proofData}
+        ondragenter={(e) => {
+          e.preventDefault();
+          dropActive = true;
+        }}
+        ondragover={(e) => {
+          e.preventDefault();
+          dropActive = true;
+        }}
+        ondragleave={(e) => {
+          e.preventDefault();
+          dropActive = false;
+        }}
+        ondrop={handleDrop}
         placeholder={'Click "Fetch Proof from Server" above, or paste JSON...\n\nExpected fields:\n  user_id, asset, leaf_balance,\n  root_hash, root_balance, merkle_path'}
-        class="mono mt-2 block w-full flex-1 min-h-30 resize-none rounded-lg border border-slate-700/80 bg-slate-900/80 px-3 py-2 text-xs text-slate-300 outline-none transition focus:border-fuchsia-500/50 hide-scrollbar placeholder:text-slate-600"
+        class="mono mt-2 block w-full flex-1 min-h-30 resize-none rounded-lg border bg-slate-900/80 px-3 py-2 text-xs text-slate-300 outline-none transition hide-scrollbar placeholder:text-slate-600 {dropActive ? 'border-sky-400/60 ring-1 ring-sky-400/40' : 'border-slate-700/80 focus:border-fuchsia-500/50'}"
       ></textarea>
+      <p class="text-[10px] text-slate-500">Tip: drag-and-drop a .json proof file directly onto the textarea.</p>
     </div>
 
     <!-- Actions & Status -->
@@ -172,6 +262,22 @@
         <div class="text-[10px] text-orange-400 p-2 bg-orange-500/10 rounded border border-orange-500/20">
           {errorMsg}
         </div>
+      {/if}
+
+      {#if proofData}
+        {@const parsed = (() => {
+          try {
+            return JSON.parse(proofData) as ProofPayload;
+          } catch {
+            return null;
+          }
+        })()}
+        {#if parsed?.solvency}
+          <div class="text-[10px] p-2 rounded border border-slate-700/70 bg-slate-900/70 text-slate-300">
+            Solvency snapshot: liabilities={parsed.solvency.total_liabilities}, assets={parsed.solvency.cold_wallet_assets},
+            check={parsed.solvency.liabilities_leq_assets ? "PASS" : "FAIL"}
+          </div>
+        {/if}
       {/if}
 
       <button

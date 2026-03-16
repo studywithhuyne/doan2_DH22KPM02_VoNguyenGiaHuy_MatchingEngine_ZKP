@@ -1,5 +1,6 @@
 // Engine module: in-memory order book matching logic (BTreeMap-based, sync, no I/O)
 
+#[allow(clippy::module_inception)]
 mod engine;
 mod error;
 mod order_book;

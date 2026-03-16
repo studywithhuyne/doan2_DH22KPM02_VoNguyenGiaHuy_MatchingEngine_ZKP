@@ -51,6 +51,19 @@ pub struct UserTradeDto {
 
 type ApiError = (StatusCode, Json<serde_json::Value>);
 
+type TradeRow = (
+    uuid::Uuid,
+    i64,
+    i64,
+    i64,
+    i64,
+    Decimal,
+    Decimal,
+    String,
+    String,
+    chrono::DateTime<chrono::Utc>,
+);
+
 fn db_err(e: sqlx::Error) -> ApiError {
     (
         StatusCode::INTERNAL_SERVER_ERROR,
@@ -118,7 +131,7 @@ pub async fn user_trades_handler(
 ) -> Result<Json<Vec<UserTradeDto>>, ApiError> {
     let uid = user_id as i64;
 
-    let rows: Vec<(uuid::Uuid, i64, i64, i64, i64, Decimal, Decimal, String, String, chrono::DateTime<chrono::Utc>)> =
+    let rows: Vec<TradeRow> =
         sqlx::query_as(
             "SELECT id, maker_order_id, taker_order_id, maker_user_id, taker_user_id,
                     price, amount, base_asset, quote_asset, executed_at
