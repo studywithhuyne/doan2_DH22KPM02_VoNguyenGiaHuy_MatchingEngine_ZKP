@@ -26,6 +26,7 @@ use axum::{
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use std::str::FromStr;
+use std::time::Instant;
 
 use crate::{
     api::{
@@ -107,17 +108,35 @@ pub async fn place_order(
     let order_id = state.alloc_order_id();
     // Derive canonical symbol from base/quote pair (e.g. "BTC_USDT").
     let symbol   = format!("{}_{}", req.base_asset, req.quote_asset);
+    let side_label = match side {
+        Side::Buy => "buy",
+        Side::Sell => "sell",
+    };
     let order    = Order::new(order_id, user_id, &symbol, side, price, amount);
 
     // Register owner + symbol before matching so cancel and TradeFilled lookup always succeed.
     state.register_order_user(order_id, user_id, symbol.clone());
 
     // --- Match (sync, engine write-locked, no async I/O inside) ---
+    let start = Instant::now();
     let trades = {
         let mut engine = state.engine.write();
         engine.match_order(order.clone())
             .map_err(|e| bad_request(&e.to_string()))?
     };
+    let match_latency_us = start.elapsed().as_secs_f64() * 1_000_000.0;
+    metrics::histogram!(
+        "cex_order_match_latency_us",
+        "symbol" => symbol.clone(),
+        "side" => side_label
+    )
+    .record(match_latency_us);
+    metrics::counter!(
+        "cex_orders_total",
+        "symbol" => symbol.clone(),
+        "side" => side_label
+    )
+    .increment(1);
     // Engine lock released here — async persistence and broadcasts happen below.
 
     // --- Persist: OrderPlaced MUST arrive before TradeFilled ---
@@ -128,6 +147,13 @@ pub async fn place_order(
     }).await;
 
     let trades_count = trades.len();
+    if trades_count > 0 {
+        metrics::counter!(
+            "cex_trades_total",
+            "symbol" => symbol.clone()
+        )
+        .increment(trades_count as u64);
+    }
     for trade in &trades {
         // Persist (clone Trade because PersistenceEvent takes ownership).
         let maker_user_id = state.get_order_user(trade.maker_order_id)
@@ -152,6 +178,11 @@ pub async fn place_order(
 
     // Broadcast a fresh depth snapshot so clients see the updated book.
     broadcast_orderbook_snapshot(&state, &symbol);
+    let active_symbols = {
+        let engine = state.engine.read();
+        engine.symbols().len() as f64
+    };
+    metrics::gauge!("cex_active_symbols").set(active_symbols);
 
     Ok((
         StatusCode::CREATED,
@@ -194,9 +225,19 @@ pub async fn cancel_order(
 
     // --- Persist async ---
     let _ = state.events.send(PersistenceEvent::OrderCancelled { order_id }).await;
+    metrics::counter!(
+        "cex_order_cancellations_total",
+        "symbol" => symbol.clone()
+    )
+    .increment(1);
 
     // --- Broadcast updated orderbook snapshot ---
     broadcast_orderbook_snapshot(&state, &symbol);
+    let active_symbols = {
+        let engine = state.engine.read();
+        engine.symbols().len() as f64
+    };
+    metrics::gauge!("cex_active_symbols").set(active_symbols);
 
     Ok(StatusCode::NO_CONTENT)
 }

@@ -16,7 +16,7 @@ use axum::{
 };
 use serde_json::{json, Value};
 
-use super::{data, orders, wallet, ws, zkp, state::AppState};
+use super::{data, metrics, orders, wallet, ws, zkp, state::AppState};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Public factory
@@ -27,6 +27,7 @@ use super::{data, orders, wallet, ws, zkp, state::AppState};
 pub fn build_router(state: AppState) -> Router {
     Router::new()
         .route("/health", get(health_handler))
+        .route("/metrics", get(metrics::metrics_handler))
         // API-03: order management
         .route("/api/orders",      post(orders::place_order))
         .route("/api/orders/open", get(data::open_orders_handler))

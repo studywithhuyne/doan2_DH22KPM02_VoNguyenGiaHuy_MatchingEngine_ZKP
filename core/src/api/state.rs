@@ -9,6 +9,7 @@ use std::sync::{
 };
 
 use parking_lot::{Mutex, RwLock};
+use metrics_exporter_prometheus::PrometheusHandle;
 use sqlx::PgPool;
 use tokio::sync::{broadcast, mpsc};
 
@@ -46,10 +47,13 @@ pub struct AppState {
     /// Each WebSocket connection clones a Receiver via `subscribe()`.
     /// `send` is synchronous and non-blocking; ignored if no active receivers.
     pub broadcast: broadcast::Sender<WsEvent>,
+
+    /// Prometheus exporter handle used by GET /metrics.
+    pub metrics: PrometheusHandle,
 }
 
 impl AppState {
-    pub fn new(db: PgPool, events: mpsc::Sender<PersistenceEvent>) -> Self {
+    pub fn new(db: PgPool, events: mpsc::Sender<PersistenceEvent>, metrics: PrometheusHandle) -> Self {
         let (broadcast_tx, _) = broadcast::channel(BROADCAST_CAPACITY);
         Self {
             engine:        Arc::new(RwLock::new(Engine::new())),
@@ -58,6 +62,7 @@ impl AppState {
             events,
             order_users:   Arc::new(Mutex::new(HashMap::new())),
             broadcast:     broadcast_tx,
+            metrics,
         }
     }
 
