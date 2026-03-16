@@ -5,9 +5,12 @@
   import { authState, bootstrapAuth } from "./stores/authStore";
   import Navbar from "./components/layout/Navbar.svelte";
   import LoginPage from "./components/pages/LoginPage.svelte";
+  import LandingPage from "./components/pages/LandingPage.svelte";
   import TradePage from "./components/pages/TradePage.svelte";
   import WalletPage from "./components/pages/WalletPage.svelte";
   import ZkVerifyPage from "./components/pages/ZkVerifyPage.svelte";
+
+  const AUTH_REQUIRED_ROUTES = new Set(["/trade", "/wallet", "/zk-verify"]);
 
   onMount(async () => {
     orderBook.connect();
@@ -23,7 +26,7 @@
       return;
     }
 
-    if (!$authState.userId && $router !== "/login") {
+    if (!$authState.userId && AUTH_REQUIRED_ROUTES.has($router)) {
       router.navigate("/login");
       return;
     }
@@ -42,6 +45,8 @@
       <section class="terminal-panel-strong p-6 text-center text-sm text-slate-300">
         Initializing session...
       </section>
+    {:else if $router === "/"}
+      <LandingPage />
     {:else if $router === "/login"}
       <LoginPage />
     {:else if $router === "/trade"}

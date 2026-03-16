@@ -4,7 +4,13 @@
   import { authState, logout } from "../../stores/authStore";
   import type { Route } from "../../stores/routerStore";
 
-  const NAV_LINKS: { route: Route; label: string }[] = [
+  const PUBLIC_LINKS: { route: Route; label: string }[] = [
+    { route: "/", label: "Markets" },
+    { route: "/login", label: "Login" },
+  ];
+
+  const AUTH_LINKS: { route: Route; label: string }[] = [
+    { route: "/", label: "Markets" },
     { route: "/trade", label: "Trade" },
     { route: "/wallet", label: "Wallet" },
     { route: "/zk-verify", label: "ZK Verify" },
@@ -21,7 +27,7 @@
     <!-- Navigation Links -->
     {#if $authState.userId}
       <div class="flex items-center gap-1 rounded-lg bg-slate-900/60 p-1 border border-slate-800/60">
-        {#each NAV_LINKS as link}
+        {#each AUTH_LINKS as link}
           <a
             href="#{link.route}"
             class="px-3 py-1.5 rounded-md text-xs font-medium tracking-wide transition-all
@@ -34,8 +40,18 @@
         {/each}
       </div>
     {:else}
-      <div class="mono rounded-lg border border-slate-800/60 bg-slate-900/60 px-3 py-2 text-[11px] text-slate-400">
-        Not signed in
+      <div class="flex items-center gap-1 rounded-lg bg-slate-900/60 p-1 border border-slate-800/60">
+        {#each PUBLIC_LINKS as link}
+          <a
+            href="#{link.route}"
+            class="px-3 py-1.5 rounded-md text-xs font-medium tracking-wide transition-all
+              {$router === link.route
+                ? 'bg-sky-500/15 text-sky-300 border border-sky-400/30'
+                : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50 border border-transparent'}"
+          >
+            {link.label}
+          </a>
+        {/each}
       </div>
     {/if}
 

@@ -133,6 +133,15 @@ export type AveragePriceDto = {
   micro_price: string | null;
 };
 
+export type CandleDto = {
+  time: number;
+  open: string;
+  high: string;
+  low: string;
+  close: string;
+  volume: string;
+};
+
 export const fetchOpenOrders = (userId: AuthUserId) =>
   apiGet<OpenOrder[]>("/api/orders/open", userId);
 
@@ -147,6 +156,11 @@ export const fetchBalances = (userId: AuthUserId) =>
 
 export const fetchAveragePrice = (symbol = "BTC_USDT") =>
   apiGet<AveragePriceDto>(`/api/price/average?symbol=${encodeURIComponent(symbol)}`);
+
+export const fetchCandles = (symbol: string, interval = "1d", limit = 1) =>
+  apiGet<CandleDto[]>(
+    `/api/candles?symbol=${encodeURIComponent(symbol)}&interval=${encodeURIComponent(interval)}&limit=${limit}`,
+  );
 
 export const postDeposit = (userId: AuthUserId, asset: string, amount: string) =>
   apiPost<DepositResponse>("/api/deposit", { asset, amount }, userId);
