@@ -83,4 +83,11 @@ impl AppState {
     pub fn get_order_user(&self, order_id: u64) -> Option<(u64, String)> {
         self.order_users.lock().get(&order_id).cloned()
     }
+
+    /// Remove order owner mapping. Used to clean up pre-registered IDs when
+    /// placement fails validation/matching.
+    #[inline]
+    pub fn unregister_order_user(&self, order_id: u64) {
+        self.order_users.lock().remove(&order_id);
+    }
 }

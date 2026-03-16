@@ -128,8 +128,15 @@ pub async fn place_order(
     let start = Instant::now();
     let trades = {
         let mut engine = state.engine.write();
-        engine.match_order(order.clone())
-            .map_err(|e| bad_request(&e.to_string()))?
+        match engine.match_order(order.clone()) {
+            Ok(trades) => trades,
+            Err(e) => {
+                // The order was pre-registered for ownership lookup; remove it
+                // if matching rejected the incoming order.
+                state.unregister_order_user(order_id);
+                return Err(bad_request(&e.to_string()));
+            }
+        }
     };
     let match_latency_us = start.elapsed().as_secs_f64() * 1_000_000.0;
     metrics::histogram!(
