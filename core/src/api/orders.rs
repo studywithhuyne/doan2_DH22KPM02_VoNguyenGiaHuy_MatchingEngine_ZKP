@@ -38,6 +38,13 @@ use crate::{
     engine::{Order, Side},
 };
 
+#[derive(Debug, sqlx::FromRow)]
+struct OpenOrderLookupRow {
+    user_id: i64,
+    base_asset: String,
+    quote_asset: String,
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Request / Response types
 // ─────────────────────────────────────────────────────────────────────────────
@@ -203,10 +210,37 @@ pub async fn cancel_order(
     UserId(user_id): UserId,
     Path(order_id): Path<u64>,
 ) -> Result<StatusCode, (StatusCode, Json<serde_json::Value>)> {
-    // --- Ownership check (no lock needed — order_users is a separate Mutex) ---
-    let (owner_id, symbol) = state
-        .get_order_user(order_id)
+    // --- Ownership + symbol resolution ---
+    // Fast path: in-memory map (hot path while process is alive)
+    // Fallback: DB lookup (covers stale rows after restart).
+    let (owner_id, symbol) = if let Some((owner_id, symbol)) = state.get_order_user(order_id) {
+        (owner_id, symbol)
+    } else {
+        let row: OpenOrderLookupRow = sqlx::query_as(
+            "SELECT user_id, base_asset, quote_asset
+             FROM orders_log
+             WHERE order_id = $1 AND status::text IN ('open', 'partial')",
+        )
+        .bind(order_id as i64)
+        .fetch_optional(&state.db)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({ "error": format!("database error: {e}") })),
+            )
+        })?
         .ok_or_else(|| not_found("order not found"))?;
+
+        if row.user_id <= 0 {
+            return Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({ "error": "invalid order owner in database" })),
+            ));
+        }
+
+        (row.user_id as u64, format!("{}_{}", row.base_asset, row.quote_asset))
+    };
 
     if owner_id != user_id {
         return Err((
@@ -215,12 +249,11 @@ pub async fn cancel_order(
         ));
     }
 
-    // --- Cancel in engine (sync, write-locked) ---
+    // --- Cancel in engine if currently loaded (sync, write-locked) ---
+    // If not found in memory (e.g. after restart), continue and persist cancellation to DB.
     {
         let mut engine = state.engine.write();
-        engine
-            .cancel_order(&symbol, order_id)
-            .map_err(|_| not_found("order not found or already filled"))?;
+        let _ = engine.cancel_order(&symbol, order_id);
     }
 
     // --- Persist async ---

@@ -7,11 +7,24 @@
   let orders = $state<OpenOrder[]>([]);
   let isLoading = $state(false);
   let cancellingId = $state<number | null>(null);
+  let tableContainer = $state<HTMLDivElement | null>(null);
+  let reloadTimer = $state<ReturnType<typeof setTimeout> | null>(null);
+  let pollTimer = $state<ReturnType<typeof setInterval> | null>(null);
+  let lastTopOrderId = $state<number | null>(null);
 
   async function loadOrders() {
     isLoading = true;
     try {
-      orders = await fetchOpenOrders($selectedUserId);
+      const nextOrders = await fetchOpenOrders($selectedUserId);
+      const nextTopId = nextOrders[0]?.order_id ?? null;
+      const hasNewTop = lastTopOrderId !== null && nextTopId !== null && nextTopId !== lastTopOrderId;
+
+      orders = nextOrders;
+      lastTopOrderId = nextTopId;
+
+      if (hasNewTop && tableContainer) {
+        tableContainer.scrollTo({ top: 0, behavior: "smooth" });
+      }
     } catch {
       orders = [];
     } finally {
@@ -19,10 +32,48 @@
     }
   }
 
+  function scheduleReload() {
+    if (reloadTimer) return;
+
+    reloadTimer = setTimeout(() => {
+      reloadTimer = null;
+      void loadOrders();
+    }, 120);
+  }
+
   $effect(() => {
     void $selectedUserId;
-    void $orderBook.trades.length;
-    loadOrders();
+    void loadOrders();
+    scheduleReload();
+  });
+
+  $effect(() => {
+    // orderbook_update arrives for every place/cancel/match, even when no trade is executed.
+    void $orderBook.bids;
+    void $orderBook.asks;
+    scheduleReload();
+  });
+
+  $effect(() => {
+    const onOrdersChanged = () => {
+      scheduleReload();
+    };
+
+    window.addEventListener("orders:changed", onOrdersChanged);
+    pollTimer = setInterval(() => {
+      scheduleReload();
+    }, 1500);
+
+    return () => {
+      window.removeEventListener("orders:changed", onOrdersChanged);
+      if (pollTimer) {
+        clearInterval(pollTimer);
+        pollTimer = null;
+      }
+      if (reloadTimer) {
+        clearTimeout(reloadTimer);
+      }
+    };
   });
 
   async function handleCancel(orderId: number) {
@@ -30,6 +81,7 @@
     try {
       await cancelOrder($selectedUserId, orderId);
       orders = orders.filter((o) => o.order_id !== orderId);
+      window.dispatchEvent(new CustomEvent("orders:changed"));
     } catch (err: any) {
       console.error("Cancel failed:", err.message);
     } finally {
@@ -38,20 +90,21 @@
   }
 </script>
 
-<section class="terminal-panel p-4 sm:p-5">
+<section class="terminal-panel p-4 sm:p-5 h-105 sm:h-115 flex flex-col">
   <div class="mb-3 flex items-center justify-between">
     <h2 class="text-sm font-semibold tracking-wide text-slate-100 uppercase">Open Orders</h2>
     <span class="mono text-[10px] text-slate-500">{orders.length} order{orders.length !== 1 ? "s" : ""}</span>
   </div>
 
-  {#if isLoading && orders.length === 0}
-    <div class="flex items-center justify-center py-6 text-[10px] text-slate-500 uppercase tracking-widest animate-pulse">Loading...</div>
-  {:else if orders.length === 0}
-    <div class="flex items-center justify-center py-6 text-[10px] text-slate-600 uppercase tracking-widest">No open orders</div>
-  {:else}
-    <div class="overflow-x-auto">
+  <div class="flex-1 min-h-0">
+    {#if isLoading && orders.length === 0}
+      <div class="h-full flex items-center justify-center py-6 text-[10px] text-slate-500 uppercase tracking-widest animate-pulse">Loading...</div>
+    {:else if orders.length === 0}
+      <div class="h-full flex items-center justify-center py-6 text-[10px] text-slate-600 uppercase tracking-widest">No open orders</div>
+    {:else}
+      <div class="h-full overflow-auto" bind:this={tableContainer}>
       <table class="w-full text-xs">
-        <thead>
+        <thead class="sticky top-0 z-10 bg-slate-950/90 backdrop-blur-sm">
           <tr class="border-b border-slate-800/60 text-[10px] text-slate-500 uppercase tracking-wider">
             <th class="py-1.5 text-left font-medium">ID</th>
             <th class="py-1.5 text-left font-medium">Side</th>
@@ -93,6 +146,7 @@
           {/each}
         </tbody>
       </table>
-    </div>
-  {/if}
+      </div>
+    {/if}
+  </div>
 </section>
