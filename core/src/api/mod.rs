@@ -4,5 +4,6 @@ pub mod data;
 pub mod orders;
 pub mod router;
 pub mod state;
+pub mod wallet;
 pub mod ws;
 pub mod zkp;

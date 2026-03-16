@@ -1,14 +1,11 @@
 // core/src/api/data.rs
-// Read-only REST handlers: public market data and authenticated user balances.
+// Read-only REST handlers: public market data and authenticated user data.
 //
 // Routes (registered in router.rs):
-//   GET /api/orderbook  — top-50 depth snapshot (public, no auth required)
-//   GET /api/balances   — balance per asset for the authenticated user (requires x-user-id)
-//
-// Performance notes:
-//   - /api/orderbook acquires a read lock on the engine and returns immediately;
-//     it never touches the database.
-//   - /api/balances is a simple indexed query on the balances table (PK lookup).
+//   GET /api/orderbook     — top-50 depth snapshot (public, no auth required)
+//   GET /api/balances      — balance per asset for the authenticated user (requires x-user-id)
+//   GET /api/orders/open   — open/partial orders for the authenticated user (requires x-user-id)
+//   GET /api/trades/recent — last 50 trades globally (public, no auth required)
 //
 // Serialization:
 //   price, amount, available, locked are all returned as Decimal strings (not
@@ -25,7 +22,7 @@ use serde::Serialize;
 
 use crate::{
     api::{auth::UserId, state::AppState},
-    db::schema::Balance,
+    db::schema::{Balance, OrderLog, TradeLog},
 };
 
 /// Number of price levels returned per side in the orderbook snapshot.
@@ -59,6 +56,28 @@ pub struct BalanceDto {
     pub available: String,
     /// Funds currently locked by open orders, as a decimal string.
     pub locked:    String,
+}
+
+#[derive(Serialize)]
+pub struct OpenOrderDto {
+    pub order_id:    i64,
+    pub side:        String,
+    pub price:       String,
+    pub amount:      String,
+    pub filled:      String,
+    pub status:      String,
+    pub base_asset:  String,
+    pub quote_asset: String,
+    pub created_at:  String,
+}
+
+#[derive(Serialize)]
+pub struct RecentTradeDto {
+    pub price:       String,
+    pub amount:      String,
+    pub base_asset:  String,
+    pub quote_asset: String,
+    pub executed_at: String,
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -118,6 +137,80 @@ pub async fn balances_handler(
             asset:     b.asset_symbol,
             available: b.available.to_string(),
             locked:    b.locked.to_string(),
+        })
+        .collect();
+
+    Ok(Json(dtos))
+}
+
+/// GET /api/orders/open — open and partially filled orders for the authenticated user.
+pub async fn open_orders_handler(
+    State(state): State<AppState>,
+    UserId(user_id): UserId,
+) -> Result<Json<Vec<OpenOrderDto>>, (StatusCode, Json<serde_json::Value>)> {
+    let rows: Vec<OrderLog> = sqlx::query_as(
+        "SELECT id, order_id, user_id, side::text, price, amount, filled,
+                status::text, base_asset, quote_asset, created_at, updated_at
+         FROM orders_log
+         WHERE user_id = $1 AND status::text IN ('open', 'partial')
+         ORDER BY created_at DESC",
+    )
+    .bind(user_id as i64)
+    .fetch_all(&state.db)
+    .await
+    .map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": format!("database error: {e}") })),
+        )
+    })?;
+
+    let dtos = rows
+        .into_iter()
+        .map(|o| OpenOrderDto {
+            order_id:    o.order_id,
+            side:        o.side,
+            price:       o.price.to_string(),
+            amount:      o.amount.to_string(),
+            filled:      o.filled.to_string(),
+            status:      o.status,
+            base_asset:  o.base_asset,
+            quote_asset: o.quote_asset,
+            created_at:  o.created_at.to_rfc3339(),
+        })
+        .collect();
+
+    Ok(Json(dtos))
+}
+
+/// GET /api/trades/recent — last 50 trades globally (public, no auth).
+pub async fn recent_trades_handler(
+    State(state): State<AppState>,
+) -> Result<Json<Vec<RecentTradeDto>>, (StatusCode, Json<serde_json::Value>)> {
+    let rows: Vec<TradeLog> = sqlx::query_as(
+        "SELECT id, maker_order_id, taker_order_id, maker_user_id, taker_user_id,
+                price, amount, base_asset, quote_asset, executed_at
+         FROM trades_log
+         ORDER BY executed_at DESC
+         LIMIT 50",
+    )
+    .fetch_all(&state.db)
+    .await
+    .map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": format!("database error: {e}") })),
+        )
+    })?;
+
+    let dtos = rows
+        .into_iter()
+        .map(|t| RecentTradeDto {
+            price:       t.price.to_string(),
+            amount:      t.amount.to_string(),
+            base_asset:  t.base_asset,
+            quote_asset: t.quote_asset,
+            executed_at: t.executed_at.to_rfc3339(),
         })
         .collect();
 
