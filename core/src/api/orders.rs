@@ -36,6 +36,7 @@ use crate::{
     },
     db::worker::PersistenceEvent,
     engine::{Order, Side},
+    ledger::LedgerError,
 };
 
 #[derive(Debug, sqlx::FromRow)]
@@ -44,6 +45,10 @@ struct OpenOrderLookupRow {
     base_asset: String,
     quote_asset: String,
 }
+
+/// Maximum allowed deviation from reference price (in basis points).
+/// 2000 bps = 20%.
+const MAX_PRICE_DEVIATION_BPS: i64 = 2_000;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Request / Response types
@@ -65,10 +70,22 @@ pub struct PlaceOrderRequest {
 }
 
 #[derive(Serialize)]
+pub struct UpdatedBalanceDto {
+    pub asset:     String,
+    pub available: String,
+    pub locked:    String,
+}
+
+#[derive(Serialize)]
 pub struct PlaceOrderResponse {
     pub order_id:     u64,
     /// Number of trades generated immediately (0 = order rested on the book).
     pub trades_count: usize,
+    /// How much of the order was matched immediately (0 if fully resting).
+    pub matched_amount: String,
+    /// Updated balances for the relevant assets after this order was processed.
+    /// Clients can use this to refresh the UI without an extra GET /api/balances.
+    pub updated_balances: Vec<UpdatedBalanceDto>,
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -104,22 +121,36 @@ pub async fn place_order(
         .map_err(|_| bad_request("amount must be a valid decimal number"))?;
 
     // --- Validate ---
-    if req.base_asset.trim().is_empty() {
+    let base_asset = req.base_asset.trim().to_ascii_uppercase();
+    let quote_asset = req.quote_asset.trim().to_ascii_uppercase();
+
+    if base_asset.is_empty() {
         return Err(bad_request("base_asset must not be empty"));
     }
-    if req.quote_asset.trim().is_empty() {
+    if quote_asset.is_empty() {
         return Err(bad_request("quote_asset must not be empty"));
     }
 
     // --- Allocate ID and build Order ---
     let order_id = state.alloc_order_id();
     // Derive canonical symbol from base/quote pair (e.g. "BTC_USDT").
-    let symbol   = format!("{}_{}", req.base_asset, req.quote_asset);
+    let symbol   = format!("{}_{}", base_asset, quote_asset);
     let side_label = match side {
         Side::Buy => "buy",
         Side::Sell => "sell",
     };
     let order    = Order::new(order_id, user_id, &symbol, side, price, amount);
+
+    if let Some(reference) = reference_price_for_symbol(&state, &symbol) {
+        validate_price_band(price, reference)?;
+    }
+
+    {
+        let mut ledger = state.ledger.lock();
+        ledger
+            .reserve_for_new_order(&order, &base_asset, &quote_asset)
+            .map_err(ledger_bad_request)?;
+    }
 
     // Register owner + symbol before matching so cancel and TradeFilled lookup always succeed.
     state.register_order_user(order_id, user_id, symbol.clone());
@@ -128,9 +159,28 @@ pub async fn place_order(
     let start = Instant::now();
     let trades = {
         let mut engine = state.engine.write();
-        engine.match_order(order.clone())
-            .map_err(|e| bad_request(&e.to_string()))?
+        match engine.match_order(order.clone()) {
+            Ok(trades) => trades,
+            Err(e) => {
+                // The order was pre-registered for ownership lookup; remove it
+                // if matching rejected the incoming order.
+                if let Err(ledger_err) = state.ledger.lock().cancel_reservation(order_id) {
+                    tracing::error!(?ledger_err, order_id, "Failed to rollback ledger reservation after rejected match");
+                }
+                state.unregister_order_user(order_id);
+                return Err(bad_request(&e.to_string()));
+            }
+        }
     };
+        {
+            let mut ledger = state.ledger.lock();
+            for trade in &trades {
+                ledger
+                    .apply_trade_fill(trade)
+                    .map_err(internal_ledger_error)?;
+            }
+        }
+
     let match_latency_us = start.elapsed().as_secs_f64() * 1_000_000.0;
     metrics::histogram!(
         "cex_order_match_latency_us",
@@ -149,8 +199,8 @@ pub async fn place_order(
     // --- Persist: OrderPlaced MUST arrive before TradeFilled ---
     let _ = state.events.send(PersistenceEvent::OrderPlaced {
         order:       order.clone(),
-        base_asset:  req.base_asset.clone(),
-        quote_asset: req.quote_asset.clone(),
+        base_asset:  base_asset.clone(),
+        quote_asset: quote_asset.clone(),
     }).await;
 
     let trades_count = trades.len();
@@ -171,16 +221,18 @@ pub async fn place_order(
             maker_user_id,
             taker_user_id: user_id,
             taker_side:    side,
-            base_asset:    req.base_asset.clone(),
-            quote_asset:   req.quote_asset.clone(),
+            base_asset:    base_asset.clone(),
+            quote_asset:   quote_asset.clone(),
         }).await;
 
         // Broadcast individual fill to WebSocket clients (synchronous, non-blocking).
-        let _ = state.broadcast.send(WsEvent::TradeExecuted {
+        let _ = state.broadcast.send(WsEvent::RecentTrade {
             symbol: symbol.clone(),
             price:  trade.price.to_string(),
             amount: trade.amount.to_string(),
         });
+
+        state.set_last_trade_price(symbol.clone(), trade.price);
     }
 
     // Broadcast a fresh depth snapshot so clients see the updated book.
@@ -191,9 +243,29 @@ pub async fn place_order(
     };
     metrics::gauge!("cex_active_symbols").set(active_symbols);
 
+    // Compute matched_amount: sum of all fill quantities.
+    let matched_amount: Decimal = trades.iter().map(|t| t.amount).sum();
+
+    // Read fresh balances for base + quote assets directly from the in-memory
+    // ledger (already updated synchronously above via apply_trade_fill).
+    // This lets the client update the UI in a single round-trip.
+    let updated_balances = {
+        let ledger = state.ledger.lock();
+        let snapshots = ledger.balances_for_user(user_id);
+        snapshots
+            .into_iter()
+            .filter(|b| b.asset == base_asset || b.asset == quote_asset)
+            .map(|b| UpdatedBalanceDto {
+                asset:     b.asset,
+                available: b.free.to_string(),
+                locked:    b.locked.to_string(),
+            })
+            .collect()
+    };
+
     Ok((
         StatusCode::CREATED,
-        Json(PlaceOrderResponse { order_id, trades_count }),
+        Json(PlaceOrderResponse { order_id, trades_count, matched_amount: matched_amount.to_string(), updated_balances }),
     ))
 }
 
@@ -251,9 +323,21 @@ pub async fn cancel_order(
 
     // --- Cancel in engine if currently loaded (sync, write-locked) ---
     // If not found in memory (e.g. after restart), continue and persist cancellation to DB.
+    let mut cancelled_in_memory = false;
     {
         let mut engine = state.engine.write();
-        let _ = engine.cancel_order(&symbol, order_id);
+        if engine.cancel_order(&symbol, order_id).is_ok() {
+            cancelled_in_memory = true;
+        }
+    }
+
+    if cancelled_in_memory {
+        state
+            .ledger
+            .lock()
+            .cancel_reservation(order_id)
+            .map_err(internal_ledger_error)?;
+        state.unregister_order_user(order_id);
     }
 
     // --- Persist async ---
@@ -310,4 +394,56 @@ fn bad_request(msg: &str) -> (StatusCode, Json<serde_json::Value>) {
 #[inline]
 fn not_found(msg: &str) -> (StatusCode, Json<serde_json::Value>) {
     (StatusCode::NOT_FOUND, Json(serde_json::json!({ "error": msg })))
+}
+
+fn reference_price_for_symbol(state: &AppState, symbol: &str) -> Option<Decimal> {
+    if let Some(last_trade) = state.get_last_trade_price(symbol) {
+        return Some(last_trade);
+    }
+
+    let (bids, asks) = {
+        let engine = state.engine.read();
+        engine.depth_snapshot(symbol, 1)
+    };
+
+    match (bids.first().map(|(p, _)| *p), asks.first().map(|(p, _)| *p)) {
+        (Some(bid), Some(ask)) => Some((bid + ask) / Decimal::from(2_u64)),
+        (Some(bid), None) => Some(bid),
+        (None, Some(ask)) => Some(ask),
+        (None, None) => None,
+    }
+}
+
+fn validate_price_band(
+    incoming_price: Decimal,
+    reference_price: Decimal,
+) -> Result<(), (StatusCode, Json<serde_json::Value>)> {
+    if reference_price <= Decimal::ZERO {
+        return Ok(());
+    }
+
+    let bps = Decimal::from(MAX_PRICE_DEVIATION_BPS) / Decimal::from(10_000_u64);
+    let lower = reference_price * (Decimal::ONE - bps);
+    let upper = reference_price * (Decimal::ONE + bps);
+
+    if incoming_price < lower || incoming_price > upper {
+        return Err(bad_request(&format!(
+            "price out of allowed band: incoming={incoming_price}, reference={reference_price}, allowed=[{lower}, {upper}]"
+        )));
+    }
+
+    Ok(())
+}
+
+#[inline]
+fn ledger_bad_request(err: LedgerError) -> (StatusCode, Json<serde_json::Value>) {
+    (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": err.to_string() })))
+}
+
+#[inline]
+fn internal_ledger_error(err: LedgerError) -> (StatusCode, Json<serde_json::Value>) {
+    (
+        StatusCode::INTERNAL_SERVER_ERROR,
+        Json(serde_json::json!({ "error": format!("ledger error: {err}") })),
+    )
 }

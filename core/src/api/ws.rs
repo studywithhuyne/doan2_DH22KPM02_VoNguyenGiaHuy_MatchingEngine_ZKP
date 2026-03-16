@@ -13,7 +13,7 @@
 //
 // Event types:
 //   orderbook_update — full top-50 depth snapshot after any book change.
-//   trade_executed   — price + amount of a single fill event.
+//   recent_trade     — price + amount of a single fill event.
 //
 // Backpressure:
 //   The channel is bounded (BROADCAST_CAPACITY).  If a receiver falls behind,
@@ -65,7 +65,7 @@ pub enum WsEvent {
         asks:   Vec<WsPriceLevel>,
     },
     /// A single trade fill — broadcast once per matched trade.
-    TradeExecuted {
+    RecentTrade {
         /// Trading pair symbol, e.g. "BTC_USDT".
         symbol: String,
         price:  String,

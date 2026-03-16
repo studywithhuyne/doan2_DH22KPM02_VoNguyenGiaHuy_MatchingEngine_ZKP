@@ -23,7 +23,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     api::{auth::UserId, state::AppState},
-    db::schema::{Balance, Candle, OrderLog, TradeLog},
+    db::schema::{Candle, TradeLog},
+    engine::Side,
 };
 
 /// Number of price levels returned per side in the orderbook snapshot.
@@ -115,6 +116,15 @@ pub struct CandleDto {
     pub volume: String,
 }
 
+#[derive(Serialize)]
+pub struct AveragePriceResponse {
+    pub symbol: String,
+    pub best_bid: Option<String>,
+    pub best_ask: Option<String>,
+    pub mid_price: Option<String>,
+    pub micro_price: Option<String>,
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Handlers
 // ─────────────────────────────────────────────────────────────────────────────
@@ -145,7 +155,38 @@ pub async fn orderbook_handler(
     })
 }
 
-/// GET /api/balances — all asset balances for the authenticated user.
+/// GET /api/balances/:asset — single asset balance for the authenticated user.
+///
+/// More efficient than fetching all balances when only one asset is needed.
+/// Returns 404 if the user has no balance record for the given asset.
+pub async fn balance_asset_handler(
+    State(state): State<AppState>,
+    UserId(user_id): UserId,
+    axum::extract::Path(asset): axum::extract::Path<String>,
+) -> Result<Json<BalanceDto>, (StatusCode, Json<serde_json::Value>)> {
+    let asset_upper = asset.trim().to_ascii_uppercase();
+
+    let balance = state
+        .ledger
+        .lock()
+        .balances_for_user(user_id)
+        .into_iter()
+        .find(|b| b.asset == asset_upper);
+
+    match balance {
+        Some(b) => Ok(Json(BalanceDto {
+            asset:     b.asset,
+            available: b.free.to_string(),
+            locked:    b.locked.to_string(),
+        })),
+        None => Err((
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({ "error": format!("no balance found for asset {asset_upper}") })),
+        )),
+    }
+}
+
+
 ///
 /// Reads from the `balances` table via an indexed primary-key lookup.
 /// Note: balances are updated asynchronously by the persistence worker,
@@ -154,26 +195,14 @@ pub async fn balances_handler(
     State(state): State<AppState>,
     UserId(user_id): UserId,
 ) -> Result<Json<Vec<BalanceDto>>, (StatusCode, Json<serde_json::Value>)> {
-    let rows: Vec<Balance> = sqlx::query_as(
-        "SELECT user_id, asset_symbol, available, locked, updated_at
-         FROM balances
-         WHERE user_id = $1",
-    )
-    .bind(user_id as i64)
-    .fetch_all(&state.db)
-    .await
-    .map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({ "error": format!("database error: {e}") })),
-        )
-    })?;
-
-    let dtos = rows
+    let dtos = state
+        .ledger
+        .lock()
+        .balances_for_user(user_id)
         .into_iter()
         .map(|b| BalanceDto {
-            asset:     b.asset_symbol,
-            available: b.available.to_string(),
+            asset:     b.asset,
+            available: b.free.to_string(),
             locked:    b.locked.to_string(),
         })
         .collect();
@@ -181,44 +210,100 @@ pub async fn balances_handler(
     Ok(Json(dtos))
 }
 
+/// GET /api/price/average?symbol=BTC_USDT
+///
+/// Computes current market averages from top-of-book levels:
+/// - mid_price   = (best_bid + best_ask) / 2
+/// - micro_price = liquidity-weighted top-book midpoint
+pub async fn average_price_handler(
+    State(state): State<AppState>,
+    Query(params): Query<OrderbookQuery>,
+) -> Json<AveragePriceResponse> {
+    let symbol = params
+        .symbol
+        .as_deref()
+        .unwrap_or("BTC_USDT")
+        .to_string();
+
+    let (bids, asks) = {
+        let engine = state.engine.read();
+        engine.depth_snapshot(&symbol, 1)
+    };
+
+    let best_bid = bids.first().map(|(p, _)| *p);
+    let best_ask = asks.first().map(|(p, _)| *p);
+
+    let mid_price = match (best_bid, best_ask) {
+        (Some(bid), Some(ask)) => Some(((bid + ask) / Decimal::from(2_u64)).round_dp(4)),
+        _ => None,
+    };
+
+    let micro_price = match (bids.first(), asks.first()) {
+        (Some((bid_price, bid_qty)), Some((ask_price, ask_qty))) => {
+            let denom = *bid_qty + *ask_qty;
+            if denom.is_zero() {
+                None
+            } else {
+                let weighted_sum = (*bid_price * *ask_qty) + (*ask_price * *bid_qty);
+                Some((weighted_sum / denom).round_dp(4))
+            }
+        }
+        _ => None,
+    };
+
+    Json(AveragePriceResponse {
+        symbol,
+        best_bid: best_bid.map(|v| v.to_string()),
+        best_ask: best_ask.map(|v| v.to_string()),
+        mid_price: mid_price.map(|v| v.to_string()),
+        micro_price: micro_price.map(|v| v.to_string()),
+    })
+}
+
 /// GET /api/orders/open — open and partially filled orders for the authenticated user.
 pub async fn open_orders_handler(
     State(state): State<AppState>,
     UserId(user_id): UserId,
 ) -> Result<Json<Vec<OpenOrderDto>>, (StatusCode, Json<serde_json::Value>)> {
-    let rows: Vec<OrderLog> = sqlx::query_as(
-        "SELECT id, order_id, user_id, side::text, price, amount, filled,
-                status::text, base_asset, quote_asset, created_at, updated_at
-         FROM orders_log
-         WHERE user_id = $1 AND status::text IN ('open', 'partial')
-         ORDER BY created_at DESC",
-    )
-    .bind(user_id as i64)
-    .fetch_all(&state.db)
-    .await
-    .map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({ "error": format!("database error: {e}") })),
-        )
-    })?;
+    let open_orders = {
+        let engine = state.engine.read();
+        engine.open_orders_by_user(user_id)
+    };
 
-    let dtos = rows
+    let dtos = open_orders
         .into_iter()
-        .map(|o| OpenOrderDto {
-            order_id:    o.order_id,
-            side:        o.side,
-            price:       o.price.to_string(),
-            amount:      o.amount.to_string(),
-            filled:      o.filled.to_string(),
-            status:      o.status,
-            base_asset:  o.base_asset,
-            quote_asset: o.quote_asset,
-            created_at:  o.created_at.to_rfc3339(),
+        .map(|order| {
+            let (base_asset, quote_asset) = split_symbol_assets(&order.symbol);
+            let filled = order.amount - order.remaining;
+            let status = if filled.is_zero() { "open" } else { "partial" };
+
+            OpenOrderDto {
+                order_id:    order.id as i64,
+                side:        match order.side {
+                    Side::Buy => "buy".to_string(),
+                    Side::Sell => "sell".to_string(),
+                },
+                price:       order.price.to_string(),
+                amount:      order.amount.to_string(),
+                filled:      filled.to_string(),
+                status:      status.to_string(),
+                base_asset,
+                quote_asset,
+                // In-memory orders don't carry DB timestamp; order_id is monotonic
+                // and already sorted newest-first in engine.open_orders_by_user.
+                created_at:  String::new(),
+            }
         })
         .collect();
 
     Ok(Json(dtos))
+}
+
+fn split_symbol_assets(symbol: &str) -> (String, String) {
+    match symbol.split_once('_') {
+        Some((base, quote)) => (base.to_string(), quote.to_string()),
+        None => (symbol.to_string(), String::new()),
+    }
 }
 
 /// GET /api/trades/recent — last 50 trades globally (public, no auth).
