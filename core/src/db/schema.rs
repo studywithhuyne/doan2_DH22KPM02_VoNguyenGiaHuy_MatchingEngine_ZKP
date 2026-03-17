@@ -119,20 +119,4 @@ pub struct TradeLog {
     pub executed_at:    DateTime<Utc>,
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// api_keys
-// ─────────────────────────────────────────────────────────────────────────────
 
-/// Ed25519 API key for algorithmic trader authentication.
-/// Each row stores the 32-byte public key; the private key is held client-side.
-#[derive(Debug, sqlx::FromRow)]
-pub struct ApiKey {
-    /// Hex-encoded random 16-byte identifier (used in the `x-api-key` header).
-    pub id:         String,
-    pub user_id:    i64,
-    /// Raw 32-byte Ed25519 public key.
-    pub public_key: Vec<u8>,
-    /// User-provided label (e.g. "my-bot-1").
-    pub label:      String,
-    pub created_at: DateTime<Utc>,
-}

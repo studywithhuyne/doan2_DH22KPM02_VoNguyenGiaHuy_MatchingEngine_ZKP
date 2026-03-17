@@ -11,6 +11,8 @@ This repository now includes a full local runtime stack:
 ### Start all services
 
 ```powershell
+# If migration files changed (especially 0001), reset persisted DB metadata first
+docker compose down -v
 docker compose up -d --build
 docker compose ps
 ```
