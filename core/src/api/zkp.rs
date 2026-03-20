@@ -9,18 +9,12 @@ use serde::{Deserialize, Serialize};
 use crate::api::{auth::UserId, state::AppState};
 
 use zkp::tree::{build_poseidon_merkle_sum_tree, BalanceSnapshot};
+use zkp::snark::{create_membership_snark, MembershipProofInput};
 
 #[derive(Debug, Deserialize)]
 pub struct ZkpProofQuery {
     pub asset: Option<String>,
     pub cold_wallet_assets: Option<String>,
-}
-
-#[derive(Debug, Serialize)]
-pub struct ZkpProofStepDto {
-    pub sibling_hash: String,
-    pub sibling_balance: String,
-    pub sibling_is_left: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -31,8 +25,8 @@ pub struct ZkpProofResponse {
     pub leaf_index: usize,
     pub leaf_balance: String,
     pub root_hash: String,
-    pub merkle_path: Vec<ZkpProofStepDto>,
     pub public_inputs: ZkpPublicInputsDto,
+    pub snark: ZkpSnarkDto,
     pub solvency: Option<ZkpSolvencyDto>,
 }
 
@@ -40,6 +34,14 @@ pub struct ZkpProofResponse {
 pub struct ZkpPublicInputsDto {
     pub expected_root_hash: String,
     pub expected_user_id: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ZkpSnarkDto {
+    pub scheme: String,
+    pub proof: String,
+    pub public_inputs: String,
+    pub verified: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -110,15 +112,11 @@ pub async fn proof_handler(
         .generate_proof(user_leaf_index)
         .map_err(|e| internal_error_msg(&format!("failed to generate merkle path: {e}")))?;
 
-    let merkle_path = proof
-        .path
-        .into_iter()
-        .map(|step| ZkpProofStepDto {
-            sibling_hash: hash_to_hex(&step.sibling_hash),
-            sibling_balance: step.sibling_balance.to_string(),
-            sibling_is_left: step.sibling_is_left,
-        })
-        .collect();
+    let snark_package = create_membership_snark(MembershipProofInput {
+        user_id,
+        leaf_balance: proof.leaf.balance,
+    })
+    .map_err(|e| internal_error_msg(&format!("failed to create zk-SNARK proof: {e}")))?;
 
     let solvency = resolve_cold_wallet_assets_optional(&asset, query.cold_wallet_assets.as_deref())?
         .map(|cold_wallet_assets| ZkpSolvencyDto {
@@ -133,10 +131,15 @@ pub async fn proof_handler(
         leaf_index: proof.leaf_index,
         leaf_balance: proof.leaf.balance.to_string(),
         root_hash: hash_to_hex(&proof.root.hash),
-        merkle_path,
         public_inputs: ZkpPublicInputsDto {
             expected_root_hash: hash_to_hex(&proof.root.hash),
             expected_user_id: user_id.to_string(),
+        },
+        snark: ZkpSnarkDto {
+            scheme: snark_package.scheme,
+            proof: snark_package.proof_b64,
+            public_inputs: snark_package.public_inputs_b64,
+            verified: snark_package.verified,
         },
         solvency,
     }))

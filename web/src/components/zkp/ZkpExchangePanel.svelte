@@ -16,7 +16,6 @@
   let result = $state<SolvencyResult | null>(null);
   let assetFilter = $state("USDT");
   let coldWalletAssets = $state("500000000");
-  let autoRefresh = $state(true);
   let countdown = $state(AUTO_REFRESH_MS / 1000);
 
   let intervalId: ReturnType<typeof setInterval> | null = null;
@@ -70,11 +69,7 @@
   }
 
   $effect(() => {
-    if (autoRefresh) {
-      startAutoRefresh();
-    } else {
-      stopAutoRefresh();
-    }
+    startAutoRefresh();
     return () => stopAutoRefresh();
   });
 </script>
@@ -94,7 +89,7 @@
 
   <div class="flex-1 flex flex-col space-y-4">
     <!-- Controls -->
-    <div class="grid gap-2 md:grid-cols-[100px_1fr_auto] md:items-center">
+    <div class="grid gap-2 md:grid-cols-[100px_1fr] md:items-center">
       <select
         bind:value={assetFilter}
         class="rounded border border-slate-700/80 bg-slate-900/80 px-2 py-2 text-xs text-slate-200 outline-none focus:border-cyan-500/50 cursor-pointer"
@@ -109,11 +104,6 @@
         placeholder="Cold wallet assets"
         class="rounded border border-slate-700/80 bg-slate-900/80 px-2.5 py-2 text-xs text-slate-200 outline-none focus:border-cyan-500/50"
       />
-
-      <label class="flex items-center gap-2 cursor-pointer select-none text-xs text-slate-300">
-        <input type="checkbox" bind:checked={autoRefresh} class="accent-cyan-500" />
-        Auto (10m)
-      </label>
     </div>
 
     <!-- Status board -->
@@ -153,7 +143,7 @@
     {/if}
 
     <!-- Auto-refresh countdown -->
-    {#if autoRefresh && status !== 'idle'}
+    {#if status !== 'idle'}
       <div class="text-center text-[10px] text-slate-500 mono">
         Next refresh in {formatCountdown(countdown)}
       </div>
