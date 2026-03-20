@@ -3,13 +3,30 @@ use axum::{
     http::StatusCode,
     Json,
 };
+use parking_lot::RwLock;
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::sync::OnceLock;
 
 use crate::api::{auth::UserId, state::AppState};
 
+use zkp::snark::{create_membership_snark, MembershipProofInput, SnarkProofPackage};
 use zkp::tree::{build_poseidon_merkle_sum_tree, BalanceSnapshot};
-use zkp::snark::{create_membership_snark, MembershipProofInput};
+
+#[derive(Debug, Clone)]
+struct CachedSnarkEntry {
+    leaf_balance: String,
+    root_hash: String,
+    package: SnarkProofPackage,
+}
+
+type SnarkCacheMap = HashMap<(u64, String), CachedSnarkEntry>;
+
+fn snark_cache() -> &'static RwLock<SnarkCacheMap> {
+    static CACHE: OnceLock<RwLock<SnarkCacheMap>> = OnceLock::new();
+    CACHE.get_or_init(|| RwLock::new(HashMap::new()))
+}
 
 #[derive(Debug, Deserialize)]
 pub struct ZkpProofQuery {
@@ -112,11 +129,16 @@ pub async fn proof_handler(
         .generate_proof(user_leaf_index)
         .map_err(|e| internal_error_msg(&format!("failed to generate merkle path: {e}")))?;
 
-    let snark_package = create_membership_snark(MembershipProofInput {
+    let leaf_balance_text = proof.leaf.balance.to_string();
+    let root_hash_text = hash_to_hex(&proof.root.hash);
+
+    let snark_package = get_or_create_snark_package(
         user_id,
-        leaf_balance: proof.leaf.balance,
-    })
-    .map_err(|e| internal_error_msg(&format!("failed to create zk-SNARK proof: {e}")))?;
+        &asset,
+        &leaf_balance_text,
+        &root_hash_text,
+        proof.leaf.balance,
+    )?;
 
     let solvency = resolve_cold_wallet_assets_optional(&asset, query.cold_wallet_assets.as_deref())?
         .map(|cold_wallet_assets| ZkpSolvencyDto {
@@ -129,10 +151,10 @@ pub async fn proof_handler(
         asset,
         snapshot_size: tree.original_leaf_count(),
         leaf_index: proof.leaf_index,
-        leaf_balance: proof.leaf.balance.to_string(),
-        root_hash: hash_to_hex(&proof.root.hash),
+        leaf_balance: leaf_balance_text,
+        root_hash: root_hash_text.clone(),
         public_inputs: ZkpPublicInputsDto {
-            expected_root_hash: hash_to_hex(&proof.root.hash),
+            expected_root_hash: root_hash_text,
             expected_user_id: user_id.to_string(),
         },
         snark: ZkpSnarkDto {
@@ -143,6 +165,39 @@ pub async fn proof_handler(
         },
         solvency,
     }))
+}
+
+fn get_or_create_snark_package(
+    user_id: u64,
+    asset: &str,
+    leaf_balance: &str,
+    root_hash: &str,
+    leaf_balance_decimal: Decimal,
+) -> Result<SnarkProofPackage, (StatusCode, Json<serde_json::Value>)> {
+    let key = (user_id, asset.to_string());
+
+    if let Some(entry) = snark_cache().read().get(&key) {
+        if entry.leaf_balance == leaf_balance && entry.root_hash == root_hash {
+            return Ok(entry.package.clone());
+        }
+    }
+
+    let package = create_membership_snark(MembershipProofInput {
+        user_id,
+        leaf_balance: leaf_balance_decimal,
+    })
+    .map_err(|e| internal_error_msg(&format!("failed to create zk-SNARK proof: {e}")))?;
+
+    snark_cache().write().insert(
+        key,
+        CachedSnarkEntry {
+            leaf_balance: leaf_balance.to_string(),
+            root_hash: root_hash.to_string(),
+            package: package.clone(),
+        },
+    );
+
+    Ok(package)
 }
 
 fn resolve_cold_wallet_assets_optional(

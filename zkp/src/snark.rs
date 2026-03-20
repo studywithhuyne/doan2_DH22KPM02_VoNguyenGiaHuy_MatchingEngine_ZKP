@@ -3,6 +3,7 @@
 use ark_bn254::{Bn254, Fr};
 use ark_groth16::{
     create_random_proof, generate_random_parameters, prepare_verifying_key, verify_proof,
+    ProvingKey,
 };
 use ark_r1cs_std::{
     fields::fp::FpVar,
@@ -11,7 +12,9 @@ use ark_r1cs_std::{
 use ark_relations::{ns, r1cs::{ConstraintSynthesizer, ConstraintSystemRef, SynthesisError}};
 use ark_sponge::{constraints::CryptographicSpongeVar, poseidon::constraints::PoseidonSpongeVar};
 use base64::{engine::general_purpose::STANDARD, Engine as _};
+use rand::{rngs::StdRng, SeedableRng};
 use rust_decimal::Decimal;
+use std::sync::OnceLock;
 
 use crate::poseidon::poseidon_parameters;
 
@@ -96,10 +99,9 @@ pub fn create_membership_snark(input: MembershipProofInput) -> Result<SnarkProof
         leaf_balance: leaf_balance_fr,
     };
 
-    let mut rng = rand::thread_rng();
-    let params = generate_random_parameters::<Bn254, _, _>(circuit.clone(), &mut rng)
-        .map_err(|e| SnarkError::Groth16(e.to_string()))?;
+    let params = membership_parameters();
 
+    let mut rng = rand::thread_rng();
     let proof = create_random_proof(circuit, &params, &mut rng)
         .map_err(|e| SnarkError::Groth16(e.to_string()))?;
 
@@ -122,6 +124,24 @@ pub fn create_membership_snark(input: MembershipProofInput) -> Result<SnarkProof
         proof_b64: STANDARD.encode(proof_bytes),
         public_inputs_b64: STANDARD.encode(public_inputs_bytes),
         verified,
+    })
+}
+
+fn membership_parameters() -> &'static ProvingKey<Bn254> {
+    static PARAMS: OnceLock<ProvingKey<Bn254>> = OnceLock::new();
+
+    PARAMS.get_or_init(|| {
+        // Fixed-shape circuit: setup once and reuse for all requests.
+        let setup_circuit = MembershipCircuit {
+            leaf_commitment: Fr::from(0u64),
+            expected_user_id: Fr::from(0u64),
+            user_id: Fr::from(0u64),
+            leaf_balance: Fr::from(0u64),
+        };
+
+        let mut rng = StdRng::seed_from_u64(42);
+        generate_random_parameters::<Bn254, _, _>(setup_circuit, &mut rng)
+            .unwrap_or_else(|e| panic!("failed to initialize Groth16 parameters: {e}"))
     })
 }
 
