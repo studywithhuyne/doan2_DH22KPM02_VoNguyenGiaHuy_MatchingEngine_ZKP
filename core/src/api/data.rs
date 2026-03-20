@@ -97,6 +97,7 @@ pub struct OpenOrderDto {
 
 #[derive(Serialize)]
 pub struct RecentTradeDto {
+    pub market_symbol: String,
     pub price:       String,
     pub amount:      String,
     pub base_asset:  String,
@@ -312,7 +313,7 @@ pub async fn recent_trades_handler(
 ) -> Result<Json<Vec<RecentTradeDto>>, (StatusCode, Json<serde_json::Value>)> {
     let rows: Vec<TradeLog> = sqlx::query_as(
         "SELECT id, maker_order_id, taker_order_id, maker_user_id, taker_user_id,
-                price, amount, base_asset, quote_asset, executed_at
+                market_symbol, price, amount, executed_at
          FROM trades_log
          ORDER BY executed_at DESC
          LIMIT 50",
@@ -328,12 +329,16 @@ pub async fn recent_trades_handler(
 
     let dtos = rows
         .into_iter()
-        .map(|t| RecentTradeDto {
+        .map(|t| {
+            let (base_asset, quote_asset) = split_symbol_assets(&t.market_symbol);
+            RecentTradeDto {
+            market_symbol: t.market_symbol,
             price:       t.price.to_string(),
             amount:      t.amount.to_string(),
-            base_asset:  t.base_asset,
-            quote_asset: t.quote_asset,
+            base_asset,
+            quote_asset,
             executed_at: t.executed_at.to_rfc3339(),
+            }
         })
         .collect();
 
@@ -353,9 +358,9 @@ pub async fn candles_handler(
     let limit     = params.limit.unwrap_or(100).clamp(1, 500);
 
     let rows: Vec<Candle> = sqlx::query_as(
-        "SELECT symbol, interval, open_time, open, high, low, close, volume
+           "SELECT market_symbol, interval, open_time, open, high, low, close, volume
          FROM candles
-         WHERE symbol = $1 AND interval = $2
+            WHERE market_symbol = $1 AND interval = $2
          ORDER BY open_time DESC
          LIMIT $3",
     )

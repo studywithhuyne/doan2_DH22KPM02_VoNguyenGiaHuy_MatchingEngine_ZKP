@@ -61,7 +61,6 @@ type TradeRow = (
     Decimal,
     Decimal,
     String,
-    String,
     chrono::DateTime<chrono::Utc>,
 );
 
@@ -151,7 +150,7 @@ pub async fn user_trades_handler(
     let rows: Vec<TradeRow> =
         sqlx::query_as(
             "SELECT id, maker_order_id, taker_order_id, maker_user_id, taker_user_id,
-                    price, amount, base_asset, quote_asset, executed_at
+                    price, amount, market_symbol, executed_at
              FROM trades_log
              WHERE maker_user_id = $1 OR taker_user_id = $1
              ORDER BY executed_at DESC
@@ -164,7 +163,8 @@ pub async fn user_trades_handler(
 
     let dtos = rows
         .into_iter()
-        .map(|(id, maker_oid, taker_oid, maker_uid, _taker_uid, price, amount, base, quote, exec_at)| {
+        .map(|(id, maker_oid, taker_oid, maker_uid, _taker_uid, price, amount, symbol, exec_at)| {
+            let (base, quote) = split_symbol_assets(&symbol);
             let side = if maker_uid == uid { "maker" } else { "taker" };
             UserTradeDto {
                 id:             id.to_string(),
@@ -181,4 +181,11 @@ pub async fn user_trades_handler(
         .collect();
 
     Ok(Json(dtos))
+}
+
+fn split_symbol_assets(symbol: &str) -> (String, String) {
+    match symbol.split_once('_') {
+        Some((base, quote)) => (base.to_string(), quote.to_string()),
+        None => (symbol.to_string(), String::new()),
+    }
 }

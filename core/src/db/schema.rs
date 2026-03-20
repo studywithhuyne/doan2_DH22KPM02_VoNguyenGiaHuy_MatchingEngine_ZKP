@@ -57,6 +57,18 @@ pub struct Balance {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// markets
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[derive(Debug, sqlx::FromRow)]
+pub struct Market {
+    pub symbol:      String, // e.g. "BTC_USDT"
+    pub base_asset:  String,
+    pub quote_asset: String,
+    pub created_at:  DateTime<Utc>,
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // orders_log
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -72,11 +84,10 @@ pub struct OrderLog {
     pub amount:      Decimal,
     pub filled:      Decimal,
     /// "open" | "partial" | "filled" | "cancelled" — DB enforces via `order_status` ENUM.
-    pub status:      String,
-    pub base_asset:  String,
-    pub quote_asset: String,
-    pub created_at:  DateTime<Utc>,
-    pub updated_at:  DateTime<Utc>,
+    pub status:        String,
+    pub market_symbol: String,
+    pub created_at:    DateTime<Utc>,
+    pub updated_at:    DateTime<Utc>,
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -87,7 +98,7 @@ pub struct OrderLog {
 /// Written by the persistence worker; never touched during live matching.
 #[derive(Debug, sqlx::FromRow)]
 pub struct Candle {
-    pub symbol:    String,
+    pub market_symbol: String,
     /// Interval label: "1m", "5m", "1h", or "1d".
     pub interval:  String,
     /// Start timestamp of this candle (UTC, floored to interval boundary).
@@ -112,11 +123,10 @@ pub struct TradeLog {
     pub taker_order_id: i64,
     pub maker_user_id:  i64,
     pub taker_user_id:  i64,
-    pub price:          Decimal,
-    pub amount:         Decimal,
-    pub base_asset:     String,
-    pub quote_asset:    String,
-    pub executed_at:    DateTime<Utc>,
+    pub price:         Decimal,
+    pub amount:        Decimal,
+    pub market_symbol: String,
+    pub executed_at:   DateTime<Utc>,
 }
 
 
