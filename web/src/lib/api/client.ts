@@ -125,6 +125,11 @@ export type AuthResponse = {
   auth_header: string;
 };
 
+export type UserListItem = {
+  user_id: string;
+  username: string;
+};
+
 export type BalanceDto = {
   asset: string;
   available: string;
@@ -188,3 +193,6 @@ export const postRegister = (username: string, password: string) =>
 
 export const fetchAuthMe = (userId: AuthUserId) =>
   apiGet<AuthResponse>("/api/auth/me", userId);
+
+export const fetchUsers = (userId: AuthUserId) =>
+  apiGet<UserListItem[]>("/api/auth/users", userId);

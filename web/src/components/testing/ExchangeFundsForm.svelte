@@ -1,6 +1,8 @@
 <script lang="ts">
-  import { balanceVersion, MOCK_USERS } from '../../stores/appStore';
-  import { postDeposit, postWithdraw } from '../../lib/api/client';
+  import { onMount } from 'svelte';
+  import { balanceVersion } from '../../stores/appStore';
+  import { authState } from '../../stores/authStore';
+  import { fetchUsers, postDeposit, postWithdraw, type UserListItem } from '../../lib/api/client';
   import { testingConfig } from '../../stores/testingStore';
 
   const { coldWalletAssets } = testingConfig;
@@ -14,6 +16,27 @@
   let isSubmitting = $state(false);
   let transferMessage = $state("");
   let isError = $state(false);
+  let users = $state<UserListItem[]>([]);
+
+  onMount(async () => {
+    const currentUserId = $authState.userId;
+    if (!currentUserId) {
+      users = [];
+      return;
+    }
+
+    try {
+      users = await fetchUsers(currentUserId);
+      if (users.length > 0 && !users.some((u) => u.user_id === targetUserId)) {
+        const firstUser = users[0];
+        if (firstUser) {
+          targetUserId = firstUser.user_id;
+        }
+      }
+    } catch {
+      users = [];
+    }
+  });
 
   async function handleTransfer(action: TransferAction) {
     if (!targetUserId || Number(targetUserId) <= 0) {
@@ -89,9 +112,13 @@
             bind:value={targetUserId}
             class="w-full rounded border border-slate-700/80 bg-slate-900/80 px-3 py-2 text-xs text-slate-200 outline-none focus:border-cyan-500/50"
           >
-            {#each MOCK_USERS as user}
-              <option value={user.id}>{user.name} (ID: {user.id})</option>
-            {/each}
+            {#if users.length === 0}
+              <option value={targetUserId}>User ID: {targetUserId}</option>
+            {:else}
+              {#each users as user}
+                <option value={user.user_id}>{user.username} (ID: {user.user_id})</option>
+              {/each}
+            {/if}
           </select>
         </label>
 

@@ -52,6 +52,12 @@ pub struct AuthResponse {
     pub auth_header: String,
 }
 
+#[derive(Serialize)]
+pub struct UserListItem {
+    pub user_id: String,
+    pub username: String,
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Extractor implementation
 // ─────────────────────────────────────────────────────────────────────────────
@@ -212,6 +218,36 @@ pub async fn me_handler(
 
     let (username,) = row.ok_or_else(|| unauthorized("invalid x-user-id"))?;
     Ok(Json(auth_response(user_id, username)))
+}
+
+/// GET /api/auth/users
+///
+/// Returns all users in the database for admin/testing selectors.
+pub async fn users_handler(
+    State(state): State<AppState>,
+    UserId(_caller_id): UserId,
+) -> Result<Json<Vec<UserListItem>>, ApiError> {
+    let rows: Vec<(i64, String)> = sqlx::query_as(
+        "SELECT id, username
+         FROM users
+         WHERE id > 0
+         ORDER BY id ASC",
+    )
+    .fetch_all(&state.db)
+    .await
+    .map_err(db_err)?;
+
+    let users = rows
+        .into_iter()
+        .filter_map(|(id, username)| {
+            u64::try_from(id).ok().map(|uid| UserListItem {
+                user_id: uid.to_string(),
+                username,
+            })
+        })
+        .collect();
+
+    Ok(Json(users))
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
