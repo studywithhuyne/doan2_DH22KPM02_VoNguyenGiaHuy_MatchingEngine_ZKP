@@ -2,8 +2,8 @@
 // Wallet-related handlers: mock deposit and personal trade history.
 //
 // Routes (registered in router.rs):
-//   POST /api/deposit      — add USDT/BTC/ETH/SOL/BNB funds to a user's balance (requires x-user-id)
-//   POST /api/withdraw     — withdraw USDT/BTC/ETH/SOL/BNB funds from a user's balance (requires x-user-id)
+//   POST /api/deposit      — add USDT funds to a user's balance (requires x-user-id)
+//   POST /api/withdraw     — withdraw USDT funds from a user's balance (requires x-user-id)
 //   GET  /api/trades/user  — personal trade history for the authenticated user
 
 use axum::{
@@ -282,7 +282,7 @@ fn normalized_transfer_asset(asset: Option<&str>) -> Result<String, ApiError> {
     };
 
     match normalized.as_str() {
-        "USDT" | "BTC" | "ETH" | "SOL" | "BNB" => Ok(normalized),
-        _ => Err(bad_request("asset must be one of: USDT, BTC, ETH, SOL, BNB")),
+        "USDT" => Ok(normalized),
+        _ => Err(bad_request("asset must be USDT")),
     }
 }

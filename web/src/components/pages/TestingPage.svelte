@@ -5,7 +5,7 @@
 
 <div class="mb-4 flex items-center justify-between">
   <h1 class="font-mono text-sm tracking-widest text-slate-500 uppercase">
-    Testing Environment
+    Testing Environment • Multi-Market Simulator
   </h1>
   <div class="flex items-center gap-2">
     <span class="relative flex h-2 w-2">
