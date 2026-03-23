@@ -2,6 +2,7 @@
   import { onMount, onDestroy } from "svelte";
   import { selectedMarket } from "../../stores/marketStore";
   import { SUPPORTED_MARKET_ASSETS } from "../../lib/marketMeta";
+  import { fetchLiveTickers } from "../../lib/api/client";
 
   const ASSETS = SUPPORTED_MARKET_ASSETS;
 
@@ -13,25 +14,20 @@
 
   async function fetchTickers() {
     try {
-      // Binance 24hr ticker endpoint
-      const symbols = ASSETS.map((a) => `"${a.symbol}USDT"`).join(",");
-      const res = await fetch(`https://api.binance.com/api/v3/ticker/24hr?symbols=[${symbols}]`);
-      if (res.ok) {
-        const data = await res.json();
-        let newTickers: Record<string, TickerData> = {};
-        for (const item of data) {
-          const base = item.symbol.replace("USDT", "");
-          const price = parseFloat(item.lastPrice);
-          const pChange = parseFloat(item.priceChangePercent);
-          
-          newTickers[base] = {
-            price: price < 10 ? price.toFixed(4) : price.toFixed(2),
-            pChange: Math.abs(pChange).toFixed(2),
-            isUp: pChange >= 0
-          };
-        }
-        tickers = newTickers;
+      const data = await fetchLiveTickers(ASSETS.map((a) => `${a.symbol}USDT`));
+      let newTickers: Record<string, TickerData> = {};
+      for (const item of data) {
+        const base = item.symbol.replace("USDT", "");
+        const price = parseFloat(item.last_price);
+        const pChange = parseFloat(item.price_change_percent_24h);
+
+        newTickers[base] = {
+          price: price < 10 ? price.toFixed(4) : price.toFixed(2),
+          pChange: Math.abs(pChange).toFixed(2),
+          isUp: pChange >= 0
+        };
       }
+      tickers = newTickers;
     } catch (err) {
       console.error("Failed to fetch tickers", err);
     }

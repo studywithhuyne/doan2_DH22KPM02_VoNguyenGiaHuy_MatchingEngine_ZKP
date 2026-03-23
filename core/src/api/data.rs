@@ -18,6 +18,7 @@ use axum::{
     http::StatusCode,
     Json,
 };
+use reqwest::header::HeaderValue;
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 
@@ -50,6 +51,13 @@ pub struct CandlesQuery {
     pub interval: Option<String>,
     /// Number of candles to return (max 500). Defaults to 100.
     pub limit:    Option<i64>,
+}
+
+/// Query params for GET /api/market/tickers/live.
+#[derive(Deserialize)]
+pub struct LiveTickersQuery {
+    /// Comma-separated symbols, e.g. "BTCUSDT,ETHUSDT".
+    pub symbols: Option<String>,
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -124,6 +132,25 @@ pub struct AveragePriceResponse {
     pub best_ask: Option<String>,
     pub mid_price: Option<String>,
     pub micro_price: Option<String>,
+}
+
+#[derive(Serialize)]
+pub struct LiveTickerDto {
+    pub symbol: String,
+    pub last_price: String,
+    pub price_change_percent_24h: String,
+    pub quote_volume_24h: String,
+}
+
+#[derive(Deserialize)]
+struct BinanceTickerRaw {
+    symbol: String,
+    #[serde(rename = "lastPrice")]
+    last_price: String,
+    #[serde(rename = "priceChangePercent")]
+    price_change_percent_24h: String,
+    #[serde(rename = "quoteVolume")]
+    quote_volume_24h: String,
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -389,4 +416,93 @@ pub async fn candles_handler(
         .collect();
 
     Ok(Json(dtos))
+}
+
+/// GET /api/market/tickers/live?symbols=BTCUSDT,ETHUSDT
+///
+/// Proxies Binance 24h ticker API via backend so API keys are never exposed to frontend bundles.
+/// Uses env vars:
+/// - BINANCE_API_BASE_URL (default: https://api.binance.com/api/v3)
+/// - BINANCE_API_KEY (optional for public endpoints, included if provided)
+pub async fn live_tickers_handler(
+    Query(params): Query<LiveTickersQuery>,
+) -> Result<Json<Vec<LiveTickerDto>>, (StatusCode, Json<serde_json::Value>)> {
+    let base_url = std::env::var("BINANCE_API_BASE_URL")
+        .ok()
+        .filter(|v| !v.trim().is_empty())
+        .unwrap_or_else(|| "https://api.binance.com/api/v3".to_string());
+
+    let symbols: Vec<String> = params
+        .symbols
+        .as_deref()
+        .unwrap_or("BTCUSDT,ETHUSDT,SOLUSDT,BNBUSDT")
+        .split(',')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_ascii_uppercase())
+        .collect();
+
+    if symbols.is_empty() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": "symbols must not be empty" })),
+        ));
+    }
+
+    let symbols_json = format!(
+        "[{}]",
+        symbols
+            .iter()
+            .map(|s| format!("\"{}\"", s))
+            .collect::<Vec<_>>()
+            .join(",")
+    );
+
+    let mut request = reqwest::Client::new()
+        .get(format!("{}/ticker/24hr", base_url.trim_end_matches('/')))
+        .query(&[("symbols", symbols_json)]);
+
+    if let Ok(key) = std::env::var("BINANCE_API_KEY") {
+        let k = key.trim();
+        if !k.is_empty() {
+            if let Ok(header_value) = HeaderValue::from_str(k) {
+                request = request.header("X-MBX-APIKEY", header_value);
+            }
+        }
+    }
+
+    let response = request.send().await.map_err(|e| {
+        (
+            StatusCode::BAD_GATEWAY,
+            Json(serde_json::json!({ "error": format!("failed to reach Binance: {e}") })),
+        )
+    })?;
+
+    if !response.status().is_success() {
+        return Err((
+            StatusCode::BAD_GATEWAY,
+            Json(serde_json::json!({
+                "error": format!("Binance returned status {}", response.status())
+            })),
+        ));
+    }
+
+    let raw: Vec<BinanceTickerRaw> = response.json().await.map_err(|e| {
+        (
+            StatusCode::BAD_GATEWAY,
+            Json(serde_json::json!({ "error": format!("invalid Binance response: {e}") })),
+        )
+    })?;
+
+    let out = raw
+        .into_iter()
+        .map(|t| LiveTickerDto {
+            symbol: t.symbol,
+            last_price: t.last_price,
+            price_change_percent_24h: t.price_change_percent_24h,
+            quote_volume_24h: t.quote_volume_24h,
+        })
+        .collect();
+
+    Ok(Json(out))
 }

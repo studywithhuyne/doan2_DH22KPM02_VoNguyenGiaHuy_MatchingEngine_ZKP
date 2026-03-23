@@ -9,7 +9,12 @@ $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
 
 $pairs = @("BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT")
-$baseUrl = "https://api.binance.com/api/v3"
+$baseUrl = if ($env:BINANCE_API_BASE_URL -and $env:BINANCE_API_BASE_URL.Trim() -ne "") {
+    $env:BINANCE_API_BASE_URL.TrimEnd('/')
+} else {
+    "https://api.binance.com/api/v3"
+}
+$binanceApiKey = if ($env:BINANCE_API_KEY) { $env:BINANCE_API_KEY.Trim() } else { "" }
 $dataDir = "data"
 
 if (-not (Test-Path $dataDir)) {
@@ -18,7 +23,11 @@ if (-not (Test-Path $dataDir)) {
 
 function Invoke-BinanceGet {
     param([string] $Path)
-    return Invoke-RestMethod -Method Get -Uri "$baseUrl/$Path" -TimeoutSec 15
+    $headers = @{}
+    if ($binanceApiKey -ne "") {
+        $headers["X-MBX-APIKEY"] = $binanceApiKey
+    }
+    return Invoke-RestMethod -Method Get -Uri "$baseUrl/$Path" -Headers $headers -TimeoutSec 15
 }
 
 function Seed-OrdersForMarket {

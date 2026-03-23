@@ -3,6 +3,7 @@
   import { router } from "../../stores/routerStore";
   import { selectedMarket } from "../../stores/marketStore";
   import { SUPPORTED_MARKET_ASSETS } from "../../lib/marketMeta";
+  import { fetchLiveTickers } from "../../lib/api/client";
 
   type MarketRow = {
     symbol: string;
@@ -35,26 +36,20 @@
 
   async function loadMarkets() {
     try {
-      const symbols = MARKETS.map((m) => `"${m.symbol}USDT"`).join(",");
-      const res = await fetch(`https://api.binance.com/api/v3/ticker/24hr?symbols=[${symbols}]`);
-      if (!res.ok) {
-        throw new Error(`failed to fetch ticker: ${res.status}`);
-      }
-
-      const data = await res.json();
+      const data = await fetchLiveTickers(MARKETS.map((m) => `${m.symbol}USDT`));
       const bySymbol = new Map<string, any>(data.map((item: any) => [item.symbol, item]));
 
       const results: MarketRow[] = MARKETS.map((market) => {
         const key = `${market.symbol}USDT`;
         const ticker = bySymbol.get(key);
-        const pct = Number(ticker?.priceChangePercent ?? 0);
+        const pct = Number(ticker?.price_change_percent_24h ?? 0);
         const sign = pct > 0 ? "+" : "";
 
         return {
           symbol: market.pair,
           iconUrl: market.iconUrl,
-          price: formatPrice(ticker?.lastPrice ?? null),
-          volume24h: formatVolume(ticker?.quoteVolume ?? null),
+          price: formatPrice(ticker?.last_price ?? null),
+          volume24h: formatVolume(ticker?.quote_volume_24h ?? null),
           changePct24h: Number.isFinite(pct) ? `${sign}${pct.toFixed(2)}%` : "--",
           isPositive: pct >= 0,
         };

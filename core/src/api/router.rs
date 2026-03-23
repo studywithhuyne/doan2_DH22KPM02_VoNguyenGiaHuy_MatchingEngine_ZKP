@@ -39,6 +39,7 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/orders/:id",  delete(orders::cancel_order))
         // API-04: market data and user balances
         .route("/api/orderbook", get(data::orderbook_handler))
+        .route("/api/market/tickers/live", get(data::live_tickers_handler))
         .route("/api/price/average", get(data::average_price_handler))
         .route("/api/balances",        get(data::balances_handler))
         .route("/api/balances/:asset", get(data::balance_asset_handler))

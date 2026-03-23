@@ -1,5 +1,5 @@
 <script lang="ts">
-    import { createChart, ColorType, type IChartApi, type CandlestickSeriesPartialOptions, type HistogramSeriesPartialOptions, type UTCTimestamp, type ISeriesApi } from 'lightweight-charts';
+    import { createChart, ColorType, type IChartApi, type CandlestickSeriesPartialOptions, type HistogramSeriesPartialOptions, type UTCTimestamp, type ISeriesApi, type TickMarkType, type Time } from 'lightweight-charts';
     import { onMount, onDestroy } from 'svelte';
     import { fetchCandles } from '../../lib/api/client';
     import { orderBook } from '../../stores/orderBookStore';
@@ -24,6 +24,24 @@
     let activeCandle: CandleData | null = null;
     let unsubscribeWs: () => void;
 
+    const localTimeFormatter = (unixSeconds: number): string => {
+        return new Date(unixSeconds * 1000).toLocaleTimeString([], {
+            hour: '2-digit',
+            minute: '2-digit',
+            hour12: false,
+        });
+    };
+
+    const toUnixSeconds = (time: Time): number => {
+        if (typeof time === 'number') {
+            return time;
+        }
+        if (typeof time === 'string') {
+            return Math.floor(new Date(`${time}T00:00:00`).getTime() / 1000);
+        }
+        return Math.floor(new Date(time.year, time.month - 1, time.day).getTime() / 1000);
+    };
+
     onMount(async () => {
         if (!chartContainer) return;
 
@@ -41,6 +59,13 @@
                 timeVisible: true,
                 secondsVisible: false,
                 borderColor: '#1E222D',
+                tickMarkFormatter: (time: Time, _tickMarkType: TickMarkType, _locale: string): string => {
+                    return localTimeFormatter(toUnixSeconds(time));
+                },
+            },
+            localization: {
+                locale: navigator.language,
+                timeFormatter: (time: number): string => localTimeFormatter(time),
             },
             rightPriceScale: {
                 borderColor: '#1E222D',

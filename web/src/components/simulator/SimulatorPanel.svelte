@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onDestroy, onMount } from "svelte";
   import { SUPPORTED_MARKET_ASSETS } from "../../lib/marketMeta";
+  import { fetchLiveTickers } from "../../lib/api/client";
 
   type SimProfileKey = "normal" | "fast" | "turbo" | "hyper";
   type PairStats = {
@@ -45,11 +46,9 @@
 
   let pairStats = $state<Record<string, PairStats>>({ ...INITIAL_PAIR_STATS });
 
-  let estOrdersPerSec = $derived(() => {
-    const profile = SIM_PROFILES[profileKey];
-    const totalPerTick = profile.ordersPerPairPerTick * PAIRS.length;
-    return Math.round((1000 / profile.intervalMs) * totalPerTick);
-  });
+  let estOrdersPerSec = $derived(
+    Math.round((1000 / SIM_PROFILES[profileKey].intervalMs) * (SIM_PROFILES[profileKey].ordersPerPairPerTick * PAIRS.length)),
+  );
 
   function rand(min: number, max: number) {
     return min + Math.random() * (max - min);
@@ -57,15 +56,11 @@
 
   async function refreshTicker() {
     try {
-      const symbols = PAIRS.map((m) => `"${m.symbol}USDT"`).join(",");
-      const res = await fetch(`https://api.binance.com/api/v3/ticker/24hr?symbols=[${symbols}]`);
-      if (!res.ok) return;
-
-      const data = await res.json();
+      const data = await fetchLiveTickers(PAIRS.map((m) => `${m.symbol}USDT`));
       for (const item of data) {
         const pair = item.symbol.replace("USDT", "") + "_USDT";
-        const p = parseFloat(item.lastPrice);
-        const ch = parseFloat(item.priceChangePercent);
+        const p = parseFloat(item.last_price);
+        const ch = parseFloat(item.price_change_percent_24h);
         if (!Number.isFinite(p) || !pairStats[pair]) continue;
 
         pairStats = {
