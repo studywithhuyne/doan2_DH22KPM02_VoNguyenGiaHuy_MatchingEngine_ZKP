@@ -2,8 +2,8 @@
 // Wallet-related handlers: mock deposit and personal trade history.
 //
 // Routes (registered in router.rs):
-//   POST /api/deposit      — add BTC/USDT funds to a user's balance (requires x-user-id)
-//   POST /api/withdraw     — withdraw BTC/USDT funds from a user's balance (requires x-user-id)
+//   POST /api/deposit      — add USDT/BTC/ETH/SOL/BNB funds to a user's balance (requires x-user-id)
+//   POST /api/withdraw     — withdraw USDT/BTC/ETH/SOL/BNB funds from a user's balance (requires x-user-id)
 //   GET  /api/trades/user  — personal trade history for the authenticated user
 
 use axum::{
@@ -146,7 +146,7 @@ pub async fn deposit_handler(
     }
 }
 
-/// POST /api/withdraw — withdraw BTC/USDT from the authenticated user's available balance.
+/// POST /api/withdraw — withdraw supported assets from the authenticated user's available balance.
 pub async fn withdraw_handler(
     State(state): State<AppState>,
     UserId(user_id): UserId,
@@ -276,10 +276,13 @@ fn split_symbol_assets(symbol: &str) -> (String, String) {
 }
 
 fn normalized_transfer_asset(asset: Option<&str>) -> Result<String, ApiError> {
-    match asset {
-        Some(value) if value.trim().eq_ignore_ascii_case("USDT") => Ok("USDT".to_string()),
-        Some(value) if value.trim().eq_ignore_ascii_case("BTC") => Ok("BTC".to_string()),
-        Some(_) => Err(bad_request("asset must be BTC or USDT")),
-        None => Ok("USDT".to_string()),
+    let normalized = match asset {
+        Some(value) => value.trim().to_ascii_uppercase(),
+        None => "USDT".to_string(),
+    };
+
+    match normalized.as_str() {
+        "USDT" | "BTC" | "ETH" | "SOL" | "BNB" => Ok(normalized),
+        _ => Err(bad_request("asset must be one of: USDT, BTC, ETH, SOL, BNB")),
     }
 }

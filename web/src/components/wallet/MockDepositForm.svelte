@@ -1,6 +1,7 @@
 <script lang="ts">
   import { balanceVersion } from '../../stores/appStore';
   import { authState } from '../../stores/authStore';
+  import { SUPPORTED_ASSET_SYMBOLS } from '../../lib/marketMeta';
   import { postDeposit, postWithdraw } from "../../lib/api/client";
 
   let asset = $state("USDT");
@@ -42,17 +43,31 @@
 </script>
 
 <section class="terminal-panel p-4 sm:p-5">
-  <h2 class="mb-4 text-sm font-semibold tracking-wide text-slate-100 uppercase">Mock Wallet Transfer (USDT)</h2>
+  <h2 class="mb-4 text-sm font-semibold tracking-wide text-slate-100 uppercase">Mock Wallet Transfer</h2>
 
   <div class="space-y-3">
     <div>
-      <label for="deposit-amount" class="block text-[10px] font-medium tracking-widest text-slate-500 uppercase mb-1">USDT Amount</label>
+      <label for="wallet-asset" class="block text-[10px] font-medium tracking-widest text-slate-500 uppercase mb-1">Asset</label>
+      <select
+        id="wallet-asset"
+        bind:value={asset}
+        class="block w-full rounded-lg border border-slate-700/80 bg-slate-900/80 px-3 py-2 text-sm text-slate-100 mono outline-none transition focus:border-sky-500/50"
+      >
+        <option value="USDT">USDT</option>
+        {#each SUPPORTED_ASSET_SYMBOLS as symbol}
+          <option value={symbol}>{symbol}</option>
+        {/each}
+      </select>
+    </div>
+
+    <div>
+      <label for="deposit-amount" class="block text-[10px] font-medium tracking-widest text-slate-500 uppercase mb-1">{asset} Amount</label>
       <input
         id="deposit-amount"
         type="text"
         inputmode="decimal"
         bind:value={amount}
-        placeholder="10000"
+        placeholder={asset === "USDT" ? "10000" : "1.5"}
         class="block w-full rounded-lg border border-slate-700/80 bg-slate-900/80 px-3 py-2 text-sm text-slate-100 mono outline-none transition focus:border-sky-500/50"
       />
     </div>
@@ -64,7 +79,7 @@
         class="w-full rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-4 py-2 text-sm font-medium text-emerald-300
           hover:bg-emerald-500/20 transition disabled:opacity-40 disabled:cursor-not-allowed"
       >
-        {isSubmitting ? "Processing..." : "Deposit USDT"}
+        {isSubmitting ? "Processing..." : `Deposit ${asset}`}
       </button>
 
       <button
@@ -73,7 +88,7 @@
         class="w-full rounded-lg border border-rose-500/30 bg-rose-500/10 px-4 py-2 text-sm font-medium text-rose-300
           hover:bg-rose-500/20 transition disabled:opacity-40 disabled:cursor-not-allowed"
       >
-        {isSubmitting ? "Processing..." : "Withdraw USDT"}
+        {isSubmitting ? "Processing..." : `Withdraw ${asset}`}
       </button>
     </div>
 

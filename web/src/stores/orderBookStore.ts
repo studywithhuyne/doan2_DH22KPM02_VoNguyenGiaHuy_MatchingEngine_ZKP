@@ -55,6 +55,25 @@ function createOrderBookStore() {
   let socket: WebSocket | null = null;
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 
+  async function loadSnapshot(symbol: string) {
+    try {
+      const res = await fetch(`/api/orderbook?symbol=${encodeURIComponent(symbol)}`);
+      if (!res.ok) {
+        return;
+      }
+
+      const data = await res.json();
+      update((state) => ({
+        ...state,
+        bids: (data.bids ?? []).map((b: any) => ({ price: parseFloat(b.price), amount: parseFloat(b.amount) })),
+        asks: (data.asks ?? []).map((a: any) => ({ price: parseFloat(a.price), amount: parseFloat(a.amount) })),
+        trades: [],
+      }));
+    } catch {
+      // no-op; websocket will still update when events arrive
+    }
+  }
+
   function connect() {
     if (socket && (socket.readyState === WebSocket.CONNECTING || socket.readyState === WebSocket.OPEN)) {
       return;
@@ -142,6 +161,11 @@ function createOrderBookStore() {
     }
     set(EMPTY_STATE);
   }
+
+  selectedMarket.subscribe((symbol) => {
+    set(EMPTY_STATE);
+    void loadSnapshot(symbol);
+  });
 
   return {
     subscribe,

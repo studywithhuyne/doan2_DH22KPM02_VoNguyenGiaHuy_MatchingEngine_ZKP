@@ -124,10 +124,11 @@ pub async fn add_asset_handler(
 ) -> Result<Json<()>, (StatusCode, String)> {
     let symbol = req.symbol.to_uppercase();
     let name = req.name.clone();
+    let market_symbol = format!("{}_USDT", symbol);
     
     // Insert into assets table
     sqlx::query(
-        "INSERT INTO assets (symbol, name, decimals, is_active) VALUES ($1, $2, 8, true)"
+        "INSERT INTO assets (symbol, name, decimals, is_active) VALUES ($1, $2, 8, true) ON CONFLICT (symbol) DO NOTHING"
     )
     .bind(&symbol)
     .bind(&name)
@@ -138,12 +139,24 @@ pub async fn add_asset_handler(
     // Create a default market against USDT if needed
     if symbol != "USDT" {
         sqlx::query(
-            "INSERT INTO markets (base_asset, quote_asset, price_decimals, quantity_decimals, min_order_size, max_order_size, is_active) VALUES ($1, 'USDT', 2, 4, 1, 1000000, true) ON CONFLICT DO NOTHING"
+            "INSERT INTO markets (symbol, base_asset, quote_asset) VALUES ($1, $2, 'USDT') ON CONFLICT (symbol) DO NOTHING"
+        )
+        .bind(&market_symbol)
+        .bind(&symbol)
+        .execute(&state.db)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+        // Ensure all existing users have a zero balance row for this newly added asset.
+        sqlx::query(
+            "INSERT INTO balances (user_id, asset_symbol, available, locked)
+             SELECT id, $1, 0, 0 FROM users
+             ON CONFLICT (user_id, asset_symbol) DO NOTHING"
         )
         .bind(&symbol)
         .execute(&state.db)
         .await
-        .ok();
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     }
 
     Ok(Json(()))

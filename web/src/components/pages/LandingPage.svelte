@@ -1,17 +1,19 @@
 <script lang="ts">
   import { onMount, onDestroy } from "svelte";
   import { router } from "../../stores/routerStore";
-  import { fetchAveragePrice, fetchCandles } from "../../lib/api/client";
+  import { selectedMarket } from "../../stores/marketStore";
+  import { SUPPORTED_MARKET_ASSETS } from "../../lib/marketMeta";
 
   type MarketRow = {
     symbol: string;
+    iconUrl: string;
     price: string;
     volume24h: string;
     changePct24h: string;
     isPositive: boolean;
   };
 
-  const MARKETS = ["BTC_USDT", "ETH_USDT", "SOL_USDT", "BNB_USDT"];
+  const MARKETS = SUPPORTED_MARKET_ASSETS;
   const REFRESH_MS = 12_000;
 
   let isLoading = $state(true);
@@ -31,45 +33,44 @@
     return Number.isFinite(n) ? n.toLocaleString(undefined, { maximumFractionDigits: 2 }) : value;
   }
 
-  function formatChangePercent(open?: string | null, close?: string | null): { text: string; positive: boolean } {
-    const o = Number(open);
-    const c = Number(close);
-    if (!Number.isFinite(o) || !Number.isFinite(c) || o === 0) {
-      return { text: "--", positive: true };
-    }
-
-    const pct = ((c - o) / o) * 100;
-    const sign = pct > 0 ? "+" : "";
-    return {
-      text: `${sign}${pct.toFixed(2)}%`,
-      positive: pct >= 0,
-    };
-  }
-
   async function loadMarkets() {
     try {
-      const results = await Promise.all(
-        MARKETS.map(async (symbol) => {
-          const [avg, candles] = await Promise.all([
-            fetchAveragePrice(symbol).catch(() => null),
-            fetchCandles(symbol, "1d", 1).catch(() => []),
-          ]);
+      const symbols = MARKETS.map((m) => `"${m.symbol}USDT"`).join(",");
+      const res = await fetch(`https://api.binance.com/api/v3/ticker/24hr?symbols=[${symbols}]`);
+      if (!res.ok) {
+        throw new Error(`failed to fetch ticker: ${res.status}`);
+      }
 
-          const candle = candles[0];
-          const change = formatChangePercent(candle?.open, candle?.close);
+      const data = await res.json();
+      const bySymbol = new Map<string, any>(data.map((item: any) => [item.symbol, item]));
 
-          return {
-            symbol,
-            price: formatPrice(avg?.mid_price ?? candle?.close ?? null),
-            volume24h: formatVolume(candle?.volume ?? null),
-            changePct24h: change.text,
-            isPositive: change.positive,
-          } as MarketRow;
-        }),
-      );
+      const results: MarketRow[] = MARKETS.map((market) => {
+        const key = `${market.symbol}USDT`;
+        const ticker = bySymbol.get(key);
+        const pct = Number(ticker?.priceChangePercent ?? 0);
+        const sign = pct > 0 ? "+" : "";
+
+        return {
+          symbol: market.pair,
+          iconUrl: market.iconUrl,
+          price: formatPrice(ticker?.lastPrice ?? null),
+          volume24h: formatVolume(ticker?.quoteVolume ?? null),
+          changePct24h: Number.isFinite(pct) ? `${sign}${pct.toFixed(2)}%` : "--",
+          isPositive: pct >= 0,
+        };
+      });
 
       rows = results;
       updatedAt = new Date().toLocaleTimeString();
+    } catch {
+      rows = MARKETS.map((market) => ({
+        symbol: market.pair,
+        iconUrl: market.iconUrl,
+        price: "--",
+        volume24h: "--",
+        changePct24h: "--",
+        isPositive: true,
+      }));
     } finally {
       isLoading = false;
     }
@@ -78,6 +79,7 @@
   function openTerminal(symbol: string) {
     // Keep selected pair for future terminal support while routing to trade now.
     localStorage.setItem("preferred_trade_symbol", symbol);
+    selectedMarket.set(symbol);
     router.navigate("/trade");
   }
 
@@ -216,9 +218,7 @@
               <tr class="group transition-colors hover:bg-slate-800/30">
                 <td class="py-4 pl-4">
                   <div class="flex items-center gap-3">
-                    <div class="flex h-8 w-8 items-center justify-center rounded-full bg-slate-800 font-bold text-slate-300 ring-1 ring-slate-700">
-                      {row.symbol.split('_')[0]?.[0] || ''}
-                    </div>
+                    <img src={row.iconUrl} alt={`${row.symbol} icon`} class="h-8 w-8 rounded-full ring-1 ring-slate-700 bg-slate-800 p-1" loading="lazy" />
                     <span class="mono text-sm font-bold text-slate-100">{row.symbol.replace('_', '/')}</span>
                   </div>
                 </td>

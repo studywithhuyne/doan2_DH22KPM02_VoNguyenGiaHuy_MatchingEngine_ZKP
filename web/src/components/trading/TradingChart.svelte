@@ -2,8 +2,8 @@
     import { createChart, ColorType, type IChartApi, type CandlestickSeriesPartialOptions, type HistogramSeriesPartialOptions, type UTCTimestamp, type ISeriesApi } from 'lightweight-charts';
     import { onMount, onDestroy } from 'svelte';
     import { fetchCandles } from '../../lib/api/client';
-    let { market = "BTC_USDT" } = $props<{ market?: string }>();
     import { orderBook } from '../../stores/orderBookStore';
+    let { market = "BTC_USDT" } = $props<{ market?: string }>();
 
     // Props structure for OHLCV data
     interface CandleData {

@@ -1,9 +1,9 @@
 <script lang="ts">
   import { onMount, onDestroy } from "svelte";
   import { selectedMarket } from "../../stores/marketStore";
+  import { SUPPORTED_MARKET_ASSETS } from "../../lib/marketMeta";
 
-  // Pre-defined list of assets against USDT
-  const ASSETS = ["BTC", "ETH", "SOL", "BNB"];
+  const ASSETS = SUPPORTED_MARKET_ASSETS;
 
   // State to hold current prices and 24h change from Binance API
   type TickerData = { price: string; pChange: string; isUp: boolean };
@@ -14,7 +14,7 @@
   async function fetchTickers() {
     try {
       // Binance 24hr ticker endpoint
-      const symbols = ASSETS.map(a => `"${a}USDT"`).join(",");
+      const symbols = ASSETS.map((a) => `"${a.symbol}USDT"`).join(",");
       const res = await fetch(`https://api.binance.com/api/v3/ticker/24hr?symbols=[${symbols}]`);
       if (res.ok) {
         const data = await res.json();
@@ -46,9 +46,10 @@
     if (intervalId) clearInterval(intervalId);
   });
 
-  function selectMarket(base: string) {
-    if ($selectedMarket !== `${base}_USDT`) {
-      selectedMarket.set(`${base}_USDT`);
+  function selectMarket(pair: string) {
+    if ($selectedMarket !== pair) {
+      selectedMarket.set(pair);
+      localStorage.setItem("preferred_trade_symbol", pair);
     }
   }
 </script>
@@ -58,16 +59,23 @@
     <!-- svelte-ignore a11y_click_events_have_key_events -->
     <!-- svelte-ignore a11y_no_static_element_interactions -->
     <div 
-      class="flex items-center gap-3 px-4 py-2 rounded-lg cursor-pointer transition-colors border {$selectedMarket === `${asset}_USDT` ? 'border-sky-500 bg-slate-800' : 'border-slate-800 hover:bg-slate-800/50'}"
-      onclick={() => selectMarket(asset)}
+      class="flex items-center gap-3 px-4 py-2 rounded-lg cursor-pointer transition-colors border {$selectedMarket === asset.pair ? 'border-sky-500 bg-slate-800' : 'border-slate-800 hover:bg-slate-800/50'}"
+      onclick={() => selectMarket(asset.pair)}
     >
-      <span class="text-slate-300 font-bold">{asset}/USDT</span>
-      {#if tickers[asset]}
-        <span class="font-medium {tickers[asset].isUp ? 'text-emerald-400' : 'text-rose-400'}">
-          ${tickers[asset].price}
+      <img
+        src={asset.iconUrl}
+        alt={`${asset.symbol} icon`}
+        class="h-4 w-4 rounded-full"
+        loading="lazy"
+      />
+      <span class="text-slate-300 font-bold">{asset.symbol}/USDT</span>
+      {#if tickers[asset.symbol]}
+        {@const ticker = tickers[asset.symbol]!}
+        <span class="font-medium {ticker.isUp ? 'text-emerald-400' : 'text-rose-400'}">
+          ${ticker.price}
         </span>
-        <span class="text-[10px] px-1 rounded {tickers[asset].isUp ? 'bg-emerald-500/20 text-emerald-300' : 'bg-rose-500/20 text-rose-300'}">
-          {tickers[asset].isUp ? '+' : '-'}{tickers[asset].pChange}%
+        <span class="text-[10px] px-1 rounded {ticker.isUp ? 'bg-emerald-500/20 text-emerald-300' : 'bg-rose-500/20 text-rose-300'}">
+          {ticker.isUp ? '+' : '-'}{ticker.pChange}%
         </span>
       {:else}
         <span class="text-slate-500 animate-pulse">Loading...</span>

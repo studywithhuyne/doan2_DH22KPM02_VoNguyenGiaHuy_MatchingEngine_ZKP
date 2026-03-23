@@ -210,15 +210,15 @@
         {#if treasury}
           <div class="space-y-4">
             <div class="flex justify-between items-center bg-slate-900/50 p-3 rounded border border-slate-800/50">
-              <span class="text-sm text-slate-400">Exchange Base Capital (Vá»‘n sÃ n)</span>
+              <span class="text-sm text-slate-400">Exchange Base Capital</span>
               <span class="text-sm font-bold text-sky-400 mono">${parseFloat(treasury.exchange_capital).toLocaleString()}</span>
             </div>
             <div class="flex justify-between items-center bg-slate-900/50 p-3 rounded border border-slate-800/50">
-              <span class="text-sm text-slate-400">Total Liabilities (Ná»£/Tiá»n User)</span>
+              <span class="text-sm text-slate-400">Total Liabilities</span>
               <span class="text-sm font-bold text-rose-400 mono">${parseFloat(treasury.total_user_liabilities).toLocaleString()}</span>
             </div>
             <div class="flex justify-between items-center bg-slate-900/50 p-3 rounded border border-slate-800/50 mt-2">
-              <span class="text-sm text-slate-400 font-medium">Total Exchange Wallet (Vá»‘n + Ná»£)</span>
+              <span class="text-sm text-slate-400 font-medium">Total Exchange Wallet</span>
               <span class="text-sm font-bold text-emerald-400 mono">${parseFloat(treasury.total_exchange_funds).toLocaleString()}</span>
             </div>
             <div class="flex justify-between items-center bg-slate-900/50 p-3 rounded border border-slate-800/50">

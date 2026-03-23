@@ -1,5 +1,6 @@
 <script lang="ts">
   import { authState } from '../../stores/authStore';
+  import { SUPPORTED_ASSET_SYMBOLS } from '../../lib/marketMeta';
 
   type ProofPayload = {
     user_id: string;
@@ -206,7 +207,9 @@
         class="rounded border border-slate-700/80 bg-slate-900/80 px-2 py-2 text-xs text-slate-200 outline-none focus:border-cyan-500/50 cursor-pointer"
       >
         <option value="USDT">USDT</option>
-        <option value="BTC">BTC</option>
+        {#each SUPPORTED_ASSET_SYMBOLS as symbol}
+          <option value={symbol}>{symbol}</option>
+        {/each}
       </select>
 
       <button

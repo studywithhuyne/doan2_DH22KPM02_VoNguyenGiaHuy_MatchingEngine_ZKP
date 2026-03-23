@@ -158,16 +158,26 @@ ON CONFLICT (id) DO NOTHING;
 
 INSERT INTO assets (symbol, name, decimals) VALUES
     ('BTC',  'Bitcoin',    8),
+    ('ETH',  'Ethereum',   8),
+    ('SOL',  'Solana',     8),
+    ('BNB',  'BNB',        8),
     ('USDT', 'Tether USD', 2)
 ON CONFLICT (symbol) DO NOTHING;
 
 INSERT INTO markets (symbol, base_asset, quote_asset) VALUES
-    ('BTC_USDT', 'BTC', 'USDT')
+    ('BTC_USDT', 'BTC', 'USDT'),
+    ('ETH_USDT', 'ETH', 'USDT'),
+    ('SOL_USDT', 'SOL', 'USDT'),
+    ('BNB_USDT', 'BNB', 'USDT')
 ON CONFLICT (symbol) DO NOTHING;
 
 INSERT INTO balances (user_id, asset_symbol, available, locked) VALUES
     (1, 'BTC',  100.00000000, 0), (1, 'USDT', 10000000.00000000, 0),
+    (1, 'ETH',  500.00000000, 0), (1, 'SOL',     2000.00000000, 0), (1, 'BNB', 300.00000000, 0),
     (2, 'BTC',  100.00000000, 0), (2, 'USDT', 10000000.00000000, 0),
+    (2, 'ETH',  500.00000000, 0), (2, 'SOL',     2000.00000000, 0), (2, 'BNB', 300.00000000, 0),
     (3, 'BTC',  100.00000000, 0), (3, 'USDT', 10000000.00000000, 0),
-    (4, 'BTC',  100.00000000, 0), (4, 'USDT', 10000000.00000000, 0)
+    (3, 'ETH',  500.00000000, 0), (3, 'SOL',     2000.00000000, 0), (3, 'BNB', 300.00000000, 0),
+    (4, 'BTC',  100.00000000, 0), (4, 'USDT', 10000000.00000000, 0),
+    (4, 'ETH',  500.00000000, 0), (4, 'SOL',     2000.00000000, 0), (4, 'BNB', 300.00000000, 0)
 ON CONFLICT (user_id, asset_symbol) DO NOTHING;

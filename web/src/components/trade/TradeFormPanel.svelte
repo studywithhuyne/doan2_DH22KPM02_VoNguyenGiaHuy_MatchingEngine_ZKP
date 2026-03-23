@@ -49,6 +49,7 @@
   }
 
   $effect(() => {
+    void $selectedMarket;
     void $orderBook.bids;
     void $orderBook.asks;
     void loadAveragePrice();
@@ -123,7 +124,7 @@
         if (Array.isArray(data.updated_balances)) {
           for (const b of data.updated_balances) {
             if (b.asset === "USDT") usdtAvailable = parseFloat(b.available).toFixed(2);
-            if (b.asset === baseAsset)  btcAvailable  = parseFloat(b.available).toFixed(3);
+            if (b.asset === baseAsset)  baseAvailable  = parseFloat(b.available).toFixed(3);
           }
         } else {
           // Fallback: fetch balances separately if server didn't include them.
@@ -302,7 +303,7 @@
           ? 'bg-emerald-500 hover:bg-emerald-400 text-white shadow-[0_4px_20px_rgba(16,185,129,0.3)]'
           : 'bg-rose-500 hover:bg-rose-400 text-white shadow-[0_4px_20px_rgba(244,63,94,0.3)]'}"
     >
-      {isSubmitting ? "Placing..." : activeSide === "buy" ? "Buy {baseAsset}" : "Sell {baseAsset}"}
+      {isSubmitting ? "Placing..." : activeSide === "buy" ? `Buy ${baseAsset}` : `Sell ${baseAsset}`}
     </button>
 
   </form>
