@@ -21,9 +21,15 @@
     "strict": true,
     "jsx": "preserve",
     "verbatimModuleSyntax": true,
+    "allowArbitraryExtensions": true,
     "isolatedModules": true,
     "noUncheckedSideEffectImports": true,
-    "moduleDetection": "force"
+    "moduleDetection": "force",
+    "plugins": [
+      {
+        "name": "typescript-svelte-plugin"
+      }
+    ]
   },
   "include": [
     "src/**/*",
