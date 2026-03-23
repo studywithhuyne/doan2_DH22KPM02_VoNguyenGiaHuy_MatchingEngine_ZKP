@@ -50,18 +50,24 @@ pub struct WithdrawResponse {
 
 #[derive(Deserialize)]
 pub struct TransferRequest {
-    pub from_asset: String,
-    pub to_asset:   String,
+    pub from_asset: Option<String>,
+    pub to_asset:   Option<String>,
+    pub asset:      Option<String>,
+    pub from_wallet: Option<String>,
+    pub to_wallet:   Option<String>,
     pub amount:     String,
 }
 
 #[derive(Serialize)]
 pub struct TransferResponse {
-    pub from_asset:         String,
-    pub to_asset:           String,
+    pub from_asset:         Option<String>,
+    pub to_asset:           Option<String>,
+    pub asset:              String,
+    pub from_wallet:        Option<String>,
+    pub to_wallet:          Option<String>,
     pub transferred:        String,
-    pub new_from_available: String,
-    pub new_to_available:   String,
+    pub new_from_available: Option<String>,
+    pub new_to_available:   Option<String>,
 }
 
 #[derive(Serialize)]
@@ -117,6 +123,7 @@ pub async fn deposit_handler(
 ) -> Result<Json<DepositResponse>, ApiError> {
     let asset = normalized_transfer_asset(body.asset.as_deref())?;
     ensure_asset_exists(&state, &asset).await?;
+    ensure_user_balance_row(&state, user_id, &asset).await?;
 
     let amount: Decimal = body
         .amount
@@ -172,6 +179,7 @@ pub async fn withdraw_handler(
 ) -> Result<Json<WithdrawResponse>, ApiError> {
     let asset = normalized_transfer_asset(body.asset.as_deref())?;
     ensure_asset_exists(&state, &asset).await?;
+    ensure_user_balance_row(&state, user_id, &asset).await?;
 
     let amount: Decimal = body
         .amount
@@ -244,16 +252,6 @@ pub async fn transfer_handler(
     UserId(user_id): UserId,
     Json(body): Json<TransferRequest>,
 ) -> Result<Json<TransferResponse>, ApiError> {
-    let from_asset = normalized_required_asset(&body.from_asset)?;
-    let to_asset = normalized_required_asset(&body.to_asset)?;
-
-    if from_asset == to_asset {
-        return Err(bad_request("from_asset and to_asset must be different"));
-    }
-
-    ensure_asset_exists(&state, &from_asset).await?;
-    ensure_asset_exists(&state, &to_asset).await?;
-
     let amount: Decimal = body
         .amount
         .parse()
@@ -262,6 +260,84 @@ pub async fn transfer_handler(
     if amount <= Decimal::ZERO {
         return Err(bad_request("amount must be greater than 0"));
     }
+
+    if let Some(asset_raw) = body.asset.as_deref() {
+        let asset = normalized_required_asset(asset_raw)?;
+        ensure_asset_exists(&state, &asset).await?;
+        ensure_user_balance_row(&state, user_id, &asset).await?;
+
+        let from_wallet = body
+            .from_wallet
+            .as_deref()
+            .map(|v| v.trim().to_string())
+            .filter(|v| !v.is_empty());
+        let to_wallet = body
+            .to_wallet
+            .as_deref()
+            .map(|v| v.trim().to_string())
+            .filter(|v| !v.is_empty());
+
+        if from_wallet.is_none() || to_wallet.is_none() {
+            return Err(bad_request("from_wallet and to_wallet are required for wallet transfer"));
+        }
+
+        if from_wallet == to_wallet {
+            return Err(bad_request("from_wallet and to_wallet must be different"));
+        }
+
+        let row: Option<(Decimal,)> = sqlx::query_as(
+            "SELECT available
+             FROM balances
+             WHERE user_id = $1 AND asset_symbol = $2",
+        )
+        .bind(user_id as i64)
+        .bind(&asset)
+        .fetch_optional(&state.db)
+        .await
+        .map_err(db_err)?;
+
+        let (available_now,) = row.ok_or_else(|| {
+            (
+                StatusCode::NOT_FOUND,
+                Json(serde_json::json!({ "error": "user/asset combination not found" })),
+            )
+        })?;
+
+        if available_now < amount {
+            return Err(bad_request("insufficient available balance"));
+        }
+
+        return Ok(Json(TransferResponse {
+            from_asset: None,
+            to_asset: None,
+            asset,
+            from_wallet,
+            to_wallet,
+            transferred: amount.to_string(),
+            new_from_available: Some(available_now.to_string()),
+            new_to_available: Some(available_now.to_string()),
+        }));
+    }
+
+    let from_asset = normalized_required_asset(
+        body.from_asset
+            .as_deref()
+            .ok_or_else(|| bad_request("from_asset is required"))?,
+    )?;
+    let to_asset = normalized_required_asset(
+        body.to_asset
+            .as_deref()
+            .ok_or_else(|| bad_request("to_asset is required"))?,
+    )?;
+
+    if from_asset == to_asset {
+        return Err(bad_request("from_asset and to_asset must be different"));
+    }
+
+    ensure_asset_exists(&state, &from_asset).await?;
+    ensure_asset_exists(&state, &to_asset).await?;
+    ensure_user_balance_row(&state, user_id, &from_asset).await?;
+    ensure_user_balance_row(&state, user_id, &to_asset).await?;
 
     let mut tx = state.db.begin().await.map_err(db_err)?;
 
@@ -336,12 +412,17 @@ pub async fn transfer_handler(
         state.adjust_exchange_user_usdt(amount);
     }
 
+    let response_asset = from_asset.clone();
+
     Ok(Json(TransferResponse {
-        from_asset,
-        to_asset,
+        from_asset: Some(from_asset),
+        to_asset: Some(to_asset),
+        asset: response_asset,
+        from_wallet: None,
+        to_wallet: None,
         transferred: amount.to_string(),
-        new_from_available: from_available_after.to_string(),
-        new_to_available: to_available_after.to_string(),
+        new_from_available: Some(from_available_after.to_string()),
+        new_to_available: Some(to_available_after.to_string()),
     }))
 }
 
@@ -445,6 +526,21 @@ async fn ensure_asset_exists(state: &AppState, asset: &str) -> Result<(), ApiErr
     if exists.is_none() {
         return Err(bad_request("asset is not supported"));
     }
+
+    Ok(())
+}
+
+async fn ensure_user_balance_row(state: &AppState, user_id: u64, asset: &str) -> Result<(), ApiError> {
+    sqlx::query(
+        "INSERT INTO balances (user_id, asset_symbol, available, locked)
+         VALUES ($1, $2, 0, 0)
+         ON CONFLICT (user_id, asset_symbol) DO NOTHING",
+    )
+    .bind(user_id as i64)
+    .bind(asset)
+    .execute(&state.db)
+    .await
+    .map_err(db_err)?;
 
     Ok(())
 }

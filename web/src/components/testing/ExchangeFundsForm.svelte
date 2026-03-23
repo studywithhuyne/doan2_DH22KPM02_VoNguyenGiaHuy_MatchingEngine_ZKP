@@ -2,14 +2,13 @@
   import { onMount } from 'svelte';
   import { balanceVersion } from '../../stores/appStore';
   import { authState } from '../../stores/authStore';
-  import { fetchUsers, postDeposit, postWithdraw, type UserListItem } from '../../lib/api/client';
+  import { fetchAssets, fetchUsers, postDeposit, postWithdraw, type UserListItem } from '../../lib/api/client';
   import { testingConfig } from '../../stores/testingStore';
-  import { SUPPORTED_MARKET_ASSETS } from '../../lib/marketMeta';
 
   const { coldWalletAssets } = testingConfig;
 
   type TransferAction = "deposit" | "withdraw";
-  const TRANSFER_ASSETS = ["USDT", ...SUPPORTED_MARKET_ASSETS.map((m) => m.symbol)];
+  let transferAssets = $state<string[]>(["USDT"]);
 
   let targetUserId = $state("1");
   let asset = $state("USDT");
@@ -27,7 +26,18 @@
     }
 
     try {
-      users = await fetchUsers(currentUserId);
+      const [usersData, assetsData] = await Promise.all([
+        fetchUsers(currentUserId),
+        fetchAssets(),
+      ]);
+
+      users = usersData;
+      transferAssets = assetsData.map((a) => a.symbol);
+
+      if (!transferAssets.includes(asset)) {
+        asset = transferAssets[0] ?? "USDT";
+      }
+
       if (users.length > 0 && !users.some((u) => u.user_id === targetUserId)) {
         const firstUser = users[0];
         if (firstUser) {
@@ -36,6 +46,7 @@
       }
     } catch {
       users = [];
+      transferAssets = ["USDT"];
     }
   });
 
@@ -117,7 +128,7 @@
               <option value={targetUserId}>User ID: {targetUserId}</option>
             {:else}
               {#each users as user}
-                <option value={user.user_id}>{user.username} (ID: {user.user_id})</option>
+                <option value={user.user_id}>{user.display_name} (ID: {user.user_id})</option>
               {/each}
             {/if}
           </select>
@@ -129,7 +140,7 @@
             bind:value={asset}
             class="w-full rounded border border-slate-700/80 bg-slate-900/80 px-3 py-2 text-xs text-slate-200 outline-none focus:border-cyan-500/50"
           >
-            {#each TRANSFER_ASSETS as candidate}
+            {#each transferAssets as candidate}
               <option value={candidate}>{candidate}</option>
             {/each}
           </select>

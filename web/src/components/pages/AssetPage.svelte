@@ -2,19 +2,30 @@
   import { balanceVersion } from "../../stores/appStore";
   import { authState } from "../../stores/authStore";
   import { router } from "../../stores/routerStore";
-  import { fetchBalances, postDeposit, postTransfer, postWithdraw } from "../../lib/api/client";
-  import type { BalanceDto } from "../../lib/api/client";
+  import { fetchAssets, fetchBalances, postDeposit, postTransfer, postWithdraw } from "../../lib/api/client";
+  import type { AssetDto, BalanceDto } from "../../lib/api/client";
 
   type AssetAction = "deposit" | "withdraw" | "transfer";
 
+  type ViewAsset = {
+    symbol: string;
+    available: string;
+    locked: string;
+  };
+
+  const WALLET_OPTIONS = ["Fiat and Spot", "Funding"];
+
+  let allAssets = $state<AssetDto[]>([]);
   let balances = $state<BalanceDto[]>([]);
+  let viewAssets = $state<ViewAsset[]>([]);
   let isLoading = $state(false);
   let action = $state<AssetAction>("deposit");
   let selectedAsset = $state("USDT");
   let amount = $state("");
-  let transferFrom = $state("USDT");
-  let transferTo = $state("BTC");
+  let transferAsset = $state("USDT");
   let transferAmount = $state("");
+  let fromWallet = $state("Fiat and Spot");
+  let toWallet = $state("Funding");
   let isSubmitting = $state(false);
   let resultMsg = $state("");
   let isError = $state(false);
@@ -25,38 +36,61 @@
     { key: "transfer", label: "Transfer" },
   ];
 
-  async function loadBalances() {
+  function consumeActionIntent() {
+    const raw = localStorage.getItem("asset_default_action");
+    if (raw === "deposit" || raw === "withdraw" || raw === "transfer") {
+      action = raw;
+    }
+    localStorage.removeItem("asset_default_action");
+  }
+
+  function mergeAssetsAndBalances(assetList: AssetDto[], balanceList: BalanceDto[]): ViewAsset[] {
+    const balanceMap = new Map(balanceList.map((b) => [b.asset, b]));
+    return assetList
+      .map((asset) => {
+        const bal = balanceMap.get(asset.symbol);
+        return {
+          symbol: asset.symbol,
+          available: bal?.available ?? "0",
+          locked: bal?.locked ?? "0",
+        };
+      })
+      .sort((a, b) => a.symbol.localeCompare(b.symbol));
+  }
+
+  async function loadData() {
     const userId = $authState.userId;
     if (!userId) {
+      allAssets = [];
       balances = [];
+      viewAssets = [];
       return;
     }
 
     isLoading = true;
     try {
-      const next = await fetchBalances(userId);
-      balances = next;
+      const [assetsFromApi, balancesFromApi] = await Promise.all([fetchAssets(), fetchBalances(userId)]);
+      allAssets = assetsFromApi;
+      balances = balancesFromApi;
+      viewAssets = mergeAssetsAndBalances(assetsFromApi, balancesFromApi);
 
-      if (!next.some((b) => b.asset === selectedAsset)) {
-        selectedAsset = next[0]?.asset ?? "USDT";
+      if (!viewAssets.some((a) => a.symbol === selectedAsset)) {
+        selectedAsset = viewAssets[0]?.symbol ?? "USDT";
       }
-
-      if (!next.some((b) => b.asset === transferFrom)) {
-        transferFrom = next[0]?.asset ?? "USDT";
-      }
-
-      if (!next.some((b) => b.asset === transferTo) || transferTo === transferFrom) {
-        transferTo = next.find((b) => b.asset !== transferFrom)?.asset ?? transferFrom;
+      if (!viewAssets.some((a) => a.symbol === transferAsset)) {
+        transferAsset = viewAssets[0]?.symbol ?? "USDT";
       }
     } catch {
+      allAssets = [];
       balances = [];
+      viewAssets = [];
     } finally {
       isLoading = false;
     }
   }
 
   function availableOf(asset: string): string {
-    const found = balances.find((b) => b.asset === asset);
+    const found = viewAssets.find((a) => a.symbol === asset);
     return found?.available ?? "0";
   }
 
@@ -84,7 +118,7 @@
       }
       amount = "";
       balanceVersion.update((v) => v + 1);
-      await loadBalances();
+      await loadData();
     } catch (err: any) {
       resultMsg = err.message || "Asset action failed";
       isError = true;
@@ -94,11 +128,12 @@
   }
 
   async function submitTransfer() {
-    if (transferFrom === transferTo) {
-      resultMsg = "From and To assets must be different";
+    if (fromWallet === toWallet) {
+      resultMsg = "From and To wallets must be different";
       isError = true;
       return;
     }
+
     if (!transferAmount || Number(transferAmount) <= 0) {
       resultMsg = "Enter a valid transfer amount";
       isError = true;
@@ -113,11 +148,16 @@
     isError = false;
 
     try {
-      const res = await postTransfer(userId, transferFrom, transferTo, transferAmount);
-      resultMsg = `Transferred ${res.transferred} ${res.from_asset} -> ${res.to_asset}.`;
+      const res = await postTransfer(userId, {
+        from_wallet: fromWallet,
+        to_wallet: toWallet,
+        asset: transferAsset,
+        amount: transferAmount,
+      });
+      resultMsg = `Transferred ${res.transferred} ${transferAsset} from ${fromWallet} to ${toWallet}.`;
       transferAmount = "";
       balanceVersion.update((v) => v + 1);
-      await loadBalances();
+      await loadData();
     } catch (err: any) {
       resultMsg = err.message || "Transfer failed";
       isError = true;
@@ -133,25 +173,26 @@
   $effect(() => {
     void $authState.userId;
     void $balanceVersion;
-    loadBalances();
+    consumeActionIntent();
+    loadData();
   });
 </script>
 
 <div class="space-y-4 md:space-y-6">
-  <section class="terminal-panel-strong p-4 sm:p-5">
+  <section class="terminal-panel-strong p-6">
     <div class="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
       <div>
-        <p class="text-[11px] uppercase tracking-widest text-slate-500">Estimated Balance</p>
-        <div class="mt-2 flex items-end gap-2">
-          <p class="mono text-4xl font-bold text-slate-100">
+        <p class="mono text-xs uppercase tracking-[0.15em] text-slate-500">Estimated Balance</p>
+        <div class="mt-2 flex items-end gap-3">
+          <p class="mono text-5xl font-bold text-slate-100">
             {parseFloat(availableOf(selectedAsset)).toLocaleString(undefined, { maximumFractionDigits: 8 })}
           </p>
           <select
             bind:value={selectedAsset}
-            class="rounded border border-slate-700/80 bg-slate-900/80 px-2 py-1 text-sm text-slate-200 outline-none focus:border-sky-500/50"
+            class="rounded-lg border border-slate-700/80 bg-slate-900/80 px-3 py-2 text-lg text-slate-200 outline-none focus:border-sky-500/50"
           >
-            {#each balances as bal}
-              <option value={bal.asset}>{bal.asset}</option>
+            {#each viewAssets as asset}
+              <option value={asset.symbol}>{asset.symbol}</option>
             {/each}
           </select>
         </div>
@@ -162,36 +203,35 @@
           <button
             type="button"
             onclick={() => (action = btn.key)}
-            class="rounded-lg border px-3 py-2 text-sm font-semibold transition
+            class="rounded-lg border px-4 py-2 text-sm font-semibold transition
               {action === btn.key
-                ? 'border-sky-500/40 bg-sky-500/20 text-sky-200'
+                ? 'border-sky-500/50 bg-sky-500/20 text-sky-200'
                 : 'border-slate-700/80 bg-slate-900/80 text-slate-300 hover:border-slate-600'}"
           >
             {btn.label}
           </button>
         {/each}
-
         <button
           type="button"
           onclick={openHistory}
-          class="rounded-lg border border-slate-700/80 bg-slate-900/80 px-3 py-2 text-sm font-semibold text-slate-300 transition hover:border-slate-600"
+          class="rounded-lg border border-slate-700/80 bg-slate-900/80 px-4 py-2 text-sm font-semibold text-slate-300 transition hover:border-slate-600"
         >
           History
         </button>
       </div>
     </div>
 
-    <div class="mt-4 rounded-lg border border-slate-800/70 bg-slate-950/50 p-3">
+    <div class="mt-5 rounded-xl border border-slate-800/70 bg-slate-950/50 p-4">
       {#if action === "transfer"}
-        <div class="grid grid-cols-1 gap-3 sm:grid-cols-3">
+        <div class="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
           <label class="block">
             <span class="mb-1 block text-[10px] font-semibold tracking-wide text-slate-400 uppercase">From</span>
             <select
-              bind:value={transferFrom}
+              bind:value={fromWallet}
               class="w-full rounded border border-slate-700/80 bg-slate-900/80 px-3 py-2 text-xs text-slate-200 outline-none focus:border-cyan-500/50"
             >
-              {#each balances as bal}
-                <option value={bal.asset}>{bal.asset}</option>
+              {#each WALLET_OPTIONS as wallet}
+                <option value={wallet}>{wallet}</option>
               {/each}
             </select>
           </label>
@@ -199,11 +239,23 @@
           <label class="block">
             <span class="mb-1 block text-[10px] font-semibold tracking-wide text-slate-400 uppercase">To</span>
             <select
-              bind:value={transferTo}
+              bind:value={toWallet}
               class="w-full rounded border border-slate-700/80 bg-slate-900/80 px-3 py-2 text-xs text-slate-200 outline-none focus:border-cyan-500/50"
             >
-              {#each balances as bal}
-                <option value={bal.asset}>{bal.asset}</option>
+              {#each WALLET_OPTIONS as wallet}
+                <option value={wallet}>{wallet}</option>
+              {/each}
+            </select>
+          </label>
+
+          <label class="block">
+            <span class="mb-1 block text-[10px] font-semibold tracking-wide text-slate-400 uppercase">Coin</span>
+            <select
+              bind:value={transferAsset}
+              class="w-full rounded border border-slate-700/80 bg-slate-900/80 px-3 py-2 text-xs text-slate-200 outline-none focus:border-cyan-500/50"
+            >
+              {#each viewAssets as asset}
+                <option value={asset.symbol}>{asset.symbol}</option>
               {/each}
             </select>
           </label>
@@ -229,20 +281,20 @@
           {isSubmitting ? "Processing..." : "Transfer"}
         </button>
       {:else}
-        <div class="grid grid-cols-1 gap-3 sm:grid-cols-3">
+        <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <label class="block">
             <span class="mb-1 block text-[10px] font-semibold tracking-wide text-slate-400 uppercase">Asset</span>
             <select
               bind:value={selectedAsset}
               class="w-full rounded border border-slate-700/80 bg-slate-900/80 px-3 py-2 text-xs text-slate-200 outline-none focus:border-cyan-500/50"
             >
-              {#each balances as bal}
-                <option value={bal.asset}>{bal.asset}</option>
+              {#each viewAssets as asset}
+                <option value={asset.symbol}>{asset.symbol}</option>
               {/each}
             </select>
           </label>
 
-          <label class="block sm:col-span-2">
+          <label class="block">
             <span class="mb-1 block text-[10px] font-semibold tracking-wide text-slate-400 uppercase">Amount</span>
             <input
               type="text"
@@ -279,21 +331,21 @@
     </div>
   </section>
 
-  <section class="terminal-panel-strong p-4 sm:p-5">
+  <section class="terminal-panel-strong p-5">
     <div class="mb-3 flex items-center justify-between">
-      <h2 class="text-sm font-semibold tracking-wide text-slate-100 uppercase">My Assets</h2>
-      <span class="mono text-[10px] text-slate-500">{balances.length} assets</span>
+      <h2 class="text-2xl font-bold tracking-wide text-slate-100 uppercase">My Assets</h2>
+      <span class="mono text-[12px] text-slate-500">{viewAssets.length} assets</span>
     </div>
 
-    {#if isLoading && balances.length === 0}
+    {#if isLoading && viewAssets.length === 0}
       <div class="flex items-center justify-center py-8 text-[10px] text-slate-500 uppercase tracking-widest animate-pulse">Loading...</div>
-    {:else if balances.length === 0}
-      <div class="flex items-center justify-center py-8 text-[10px] text-slate-600 uppercase tracking-widest">No balances found</div>
+    {:else if viewAssets.length === 0}
+      <div class="flex items-center justify-center py-8 text-[10px] text-slate-600 uppercase tracking-widest">No assets found</div>
     {:else}
       <div class="overflow-x-auto">
-        <table class="w-full text-xs">
+        <table class="w-full text-sm">
           <thead>
-            <tr class="border-b border-slate-800/60 text-[10px] text-slate-500 uppercase tracking-wider">
+            <tr class="border-b border-slate-800/60 text-[11px] text-slate-500 uppercase tracking-wider">
               <th class="py-2 text-left">Coin</th>
               <th class="py-2 text-right">Available</th>
               <th class="py-2 text-right">Locked</th>
@@ -301,16 +353,13 @@
             </tr>
           </thead>
           <tbody>
-            {#each balances as bal}
-              <tr
-                class="cursor-pointer border-b border-slate-800/30 transition hover:bg-slate-800/20"
-                onclick={() => (selectedAsset = bal.asset)}
-              >
-                <td class="py-2 font-semibold text-slate-200">{bal.asset}</td>
-                <td class="py-2 text-right mono text-slate-200">{parseFloat(bal.available).toLocaleString(undefined, { maximumFractionDigits: 8 })}</td>
-                <td class="py-2 text-right mono text-slate-400">{parseFloat(bal.locked).toLocaleString(undefined, { maximumFractionDigits: 8 })}</td>
+            {#each viewAssets as asset}
+              <tr class="border-b border-slate-800/30 transition hover:bg-slate-800/20" onclick={() => (selectedAsset = asset.symbol)}>
+                <td class="py-2 font-semibold text-slate-200">{asset.symbol}</td>
+                <td class="py-2 text-right mono text-slate-200">{parseFloat(asset.available).toLocaleString(undefined, { maximumFractionDigits: 8 })}</td>
+                <td class="py-2 text-right mono text-slate-400">{parseFloat(asset.locked).toLocaleString(undefined, { maximumFractionDigits: 8 })}</td>
                 <td class="py-2 text-right mono text-slate-100">
-                  {(parseFloat(bal.available) + parseFloat(bal.locked)).toLocaleString(undefined, { maximumFractionDigits: 8 })}
+                  {(parseFloat(asset.available) + parseFloat(asset.locked)).toLocaleString(undefined, { maximumFractionDigits: 8 })}
                 </td>
               </tr>
             {/each}

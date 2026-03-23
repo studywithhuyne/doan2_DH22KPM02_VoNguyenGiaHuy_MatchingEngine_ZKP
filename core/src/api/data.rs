@@ -91,6 +91,13 @@ pub struct BalanceDto {
 }
 
 #[derive(Serialize)]
+pub struct AssetDto {
+    pub symbol: String,
+    pub name: String,
+    pub decimals: i16,
+}
+
+#[derive(Serialize)]
 pub struct OpenOrderDto {
     pub order_id:    i64,
     pub side:        String,
@@ -236,6 +243,35 @@ pub async fn balances_handler(
         .collect();
 
     Ok(Json(dtos))
+}
+
+/// GET /api/assets — all supported assets configured in exchange.
+pub async fn assets_handler(
+    State(state): State<AppState>,
+) -> Result<Json<Vec<AssetDto>>, (StatusCode, Json<serde_json::Value>)> {
+    let rows: Vec<(String, String, i16)> = sqlx::query_as(
+        "SELECT symbol, name, decimals
+         FROM assets
+         ORDER BY symbol ASC",
+    )
+    .fetch_all(&state.db)
+    .await
+    .map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": format!("database error: {e}") })),
+        )
+    })?;
+
+    Ok(Json(
+        rows.into_iter()
+            .map(|(symbol, name, decimals)| AssetDto {
+                symbol,
+                name,
+                decimals,
+            })
+            .collect(),
+    ))
 }
 
 /// GET /api/price/average?symbol=BTC_USDT

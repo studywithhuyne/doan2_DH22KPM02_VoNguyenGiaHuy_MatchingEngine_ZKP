@@ -1,7 +1,7 @@
 <script lang="ts">
   import { router } from "../../stores/routerStore";
   import { connectionState } from "../../stores/appStore";
-  import { authState, logout, updateUsername } from "../../stores/authStore";
+  import { authState, logout, updateDisplayName } from "../../stores/authStore";
   import type { Route } from "../../stores/routerStore";
 
   const PUBLIC_LINKS: { route: Route; label: string }[] = [
@@ -15,15 +15,15 @@
     { route: "/zk-verify", label: "ZK Verify" },
   ];
 
-  async function handleEditUsername() {
-    const current = $authState.username ?? "";
-    const next = window.prompt("Enter new username (a-z0-9_-)", current);
+  async function handleEditDisplayName() {
+    const current = $authState.displayName ?? "";
+    const next = window.prompt("Enter new display name", current);
     if (!next) return;
 
     try {
-      await updateUsername(next);
+      await updateDisplayName(next);
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Failed to update username";
+      const message = error instanceof Error ? error.message : "Failed to update display name";
       window.alert(message);
     }
   }
@@ -80,7 +80,7 @@
             type="button"
             class="mono rounded-lg border border-slate-700/80 bg-slate-900/80 px-2.5 py-1.5 text-xs text-slate-100 transition hover:border-slate-500"
           >
-            {$authState.username}
+            {$authState.displayName}
           </button>
 
           <div
@@ -88,20 +88,21 @@
           >
             <div class="mb-1.5 rounded-md border border-slate-800 bg-slate-900/70 px-2 py-1.5">
               <p class="text-[10px] uppercase tracking-wider text-slate-500">Signed in</p>
-              <p class="mono text-xs text-slate-200">{$authState.username}</p>
+              <p class="mono text-xs text-slate-200">{$authState.displayName}</p>
               <p class="mono text-[10px] text-cyan-300">ID: {$authState.userId}</p>
             </div>
 
-            <a href="#/" class="block rounded-md px-2 py-1.5 text-xs text-slate-300 transition hover:bg-slate-800/80 hover:text-sky-300">Dashboard</a>
+            <a href="#/" class="block rounded-md px-2 py-1.5 text-xs text-slate-300 transition hover:bg-slate-800/80 hover:text-sky-300">Markets</a>
+            <a href="#/user-dashboard" class="block rounded-md px-2 py-1.5 text-xs text-slate-300 transition hover:bg-slate-800/80 hover:text-sky-300">User Dashboard</a>
             <a href="#/asset" class="block rounded-md px-2 py-1.5 text-xs text-slate-300 transition hover:bg-slate-800/80 hover:text-sky-300">Asset</a>
             <a href="#/trade-history" class="block rounded-md px-2 py-1.5 text-xs text-slate-300 transition hover:bg-slate-800/80 hover:text-sky-300">Trade History</a>
 
             <button
               type="button"
               class="mt-1 block w-full rounded-md px-2 py-1.5 text-left text-xs text-amber-300 transition hover:bg-slate-800/80"
-              onclick={handleEditUsername}
+              onclick={handleEditDisplayName}
             >
-              Edit User Name
+              Edit Display Name
             </button>
 
             <button

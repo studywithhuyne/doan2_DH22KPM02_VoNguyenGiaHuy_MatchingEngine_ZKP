@@ -16,6 +16,7 @@ CREATE TYPE order_status AS ENUM ('open', 'partial', 'filled', 'cancelled');
 CREATE TABLE IF NOT EXISTS users (
     id            BIGINT      PRIMARY KEY,           -- ID người dùng (lấy từ Header của API)
     username      TEXT        NOT NULL UNIQUE,       -- Tên đăng nhập (duy nhất)
+    display_name  TEXT        NOT NULL,              -- Tên hiển thị (có thể thay đổi)
     password_hash TEXT,                              -- Mật khẩu đã mã hóa bằng Argon2id
     created_at    TIMESTAMPTZ NOT NULL DEFAULT now() -- Thời gian tạo tài khoản
 );
@@ -152,8 +153,11 @@ CREATE INDEX idx_candles_market_time ON candles (market_symbol, interval, open_t
 -- 9. DỮ LIỆU MẪU (SEED DATA)
 -- ==============================================================================
 
-INSERT INTO users (id, username) VALUES
-    (1, 'alice'), (2, 'bob'), (3, 'charlie'), (4, 'dave')
+INSERT INTO users (id, username, display_name) VALUES
+    (1, 'alice', 'alice'),
+    (2, 'bob', 'bob'),
+    (3, 'charlie', 'charlie'),
+    (4, 'dave', 'dave')
 ON CONFLICT (id) DO NOTHING;
 
 INSERT INTO assets (symbol, name, decimals) VALUES

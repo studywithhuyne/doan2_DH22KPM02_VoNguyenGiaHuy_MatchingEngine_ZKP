@@ -141,23 +141,34 @@ export type WithdrawResponse = {
 };
 
 export type TransferResponse = {
-  from_asset: string;
-  to_asset: string;
+  from_asset: string | null;
+  to_asset: string | null;
+  asset: string;
+  from_wallet: string | null;
+  to_wallet: string | null;
   transferred: string;
-  new_from_available: string;
-  new_to_available: string;
+  new_from_available: string | null;
+  new_to_available: string | null;
 };
 
 export type AuthResponse = {
   user_id: string;
   username: string;
+  display_name: string;
   auth_mode: string;
   auth_header: string;
 };
 
 export type UserListItem = {
   user_id: string;
-  username: string;
+  display_name: string;
+  username?: string;
+};
+
+export type AssetDto = {
+  symbol: string;
+  name: string;
+  decimals: number;
 };
 
 export type BalanceDto = {
@@ -202,6 +213,9 @@ export const fetchUserTrades = (userId: AuthUserId) =>
 export const fetchBalances = (userId: AuthUserId) =>
   apiGet<BalanceDto[]>("/api/balances", userId);
 
+export const fetchAssets = () =>
+  apiGet<AssetDto[]>("/api/assets");
+
 export const fetchBalanceByAsset = (userId: AuthUserId, asset: string) =>
   apiGet<BalanceDto>(`/api/balances/${encodeURIComponent(asset)}`, userId);
 
@@ -222,8 +236,12 @@ export const postDeposit = (userId: AuthUserId, asset: string, amount: string) =
 export const postWithdraw = (userId: AuthUserId, asset: string, amount: string) =>
   apiPost<WithdrawResponse>("/api/withdraw", { asset, amount }, userId);
 
-export const postTransfer = (userId: AuthUserId, fromAsset: string, toAsset: string, amount: string) =>
-  apiPost<TransferResponse>("/api/transfer", { from_asset: fromAsset, to_asset: toAsset, amount }, userId);
+export const postTransfer = (
+  userId: AuthUserId,
+  payload:
+    | { from_asset: string; to_asset: string; amount: string }
+    | { from_wallet: string; to_wallet: string; asset: string; amount: string },
+) => apiPost<TransferResponse>("/api/transfer", payload, userId);
 
 export const cancelOrder = (userId: AuthUserId, orderId: number) =>
   apiDelete(`/api/orders/${orderId}`, userId);
@@ -237,8 +255,8 @@ export const postRegister = (username: string, password: string) =>
 export const fetchAuthMe = (userId: AuthUserId) =>
   apiGet<AuthResponse>("/api/auth/me", userId);
 
-export const putAuthUsername = (userId: AuthUserId, username: string) =>
-  apiPut<AuthResponse>("/api/auth/username", { username }, userId);
+export const putAuthDisplayName = (userId: AuthUserId, displayName: string) =>
+  apiPut<AuthResponse>("/api/auth/display-name", { display_name: displayName }, userId);
 
 export const fetchUsers = (userId: AuthUserId) =>
   apiGet<UserListItem[]>("/api/auth/users", userId);

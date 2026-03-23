@@ -33,13 +33,14 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/auth/login",    post(auth::login_handler))
         .route("/api/auth/me",       get(auth::me_handler))
         .route("/api/auth/users",    get(auth::users_handler))
-        .route("/api/auth/username", put(auth::update_username_handler))
+        .route("/api/auth/display-name", put(auth::update_display_name_handler))
         // API-03: order management
         .route("/api/orders",      post(orders::place_order))
         .route("/api/orders/open", get(data::open_orders_handler))
         .route("/api/orders/:id",  delete(orders::cancel_order))
         // API-04: market data and user balances
         .route("/api/orderbook", get(data::orderbook_handler))
+        .route("/api/assets", get(data::assets_handler))
         .route("/api/market/tickers/live", get(data::live_tickers_handler))
         .route("/api/price/average", get(data::average_price_handler))
         .route("/api/balances",        get(data::balances_handler))

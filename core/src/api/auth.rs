@@ -45,14 +45,15 @@ pub struct LoginRequest {
 }
 
 #[derive(Deserialize)]
-pub struct UpdateUsernameRequest {
-    pub username: String,
+pub struct UpdateDisplayNameRequest {
+    pub display_name: String,
 }
 
 #[derive(Serialize)]
 pub struct AuthResponse {
     pub user_id: String,
     pub username: String,
+    pub display_name: String,
     pub auth_mode: String,
     pub auth_header: String,
 }
@@ -60,7 +61,7 @@ pub struct AuthResponse {
 #[derive(Serialize)]
 pub struct UserListItem {
     pub user_id: String,
-    pub username: String,
+    pub display_name: String,
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -144,12 +145,13 @@ pub async fn register_handler(
     }
 
     let inserted = sqlx::query(
-        "INSERT INTO users (id, username, password_hash)
-         VALUES ($1, $2, $3)
+           "INSERT INTO users (id, username, display_name, password_hash)
+            VALUES ($1, $2, $3, $4)
          ON CONFLICT (username) DO NOTHING",
     )
     .bind(next_id)
     .bind(&username)
+        .bind(&username)
     .bind(&password_hash)
     .execute(&mut *tx)
     .await
@@ -174,7 +176,7 @@ pub async fn register_handler(
     let user_id = u64::try_from(next_id).map_err(|_| internal("user id overflow"))?;
     Ok((
         StatusCode::CREATED,
-        Json(auth_response(user_id, username)),
+        Json(auth_response(user_id, username.clone(), username)),
     ))
 }
 
@@ -189,8 +191,8 @@ pub async fn login_handler(
     let username = normalize_username(&body.username)?;
     validate_password(&body.password)?;
 
-    let row: Option<(i64, String, Option<String>)> = sqlx::query_as(
-        "SELECT id, username, password_hash
+    let row: Option<(i64, String, String, Option<String>)> = sqlx::query_as(
+        "SELECT id, username, display_name, password_hash
          FROM users
          WHERE username = $1",
     )
@@ -199,30 +201,34 @@ pub async fn login_handler(
     .await
     .map_err(db_err)?;
 
-    let (id, db_username, password_hash) = row.ok_or_else(|| unauthorized("invalid username or password"))?;
+    let (id, db_username, db_display_name, password_hash) = row.ok_or_else(|| unauthorized("invalid username or password"))?;
     let stored_hash = password_hash.ok_or_else(|| unauthorized("invalid username or password"))?;
 
     verify_password(&body.password, &stored_hash)?;
 
     let user_id = u64::try_from(id).map_err(|_| internal("invalid user id in database"))?;
-    Ok(Json(auth_response(user_id, db_username)))
+    Ok(Json(auth_response(user_id, db_username, db_display_name)))
 }
 
 /// GET /api/auth/me
 ///
-/// Uses `x-user-id` extraction and returns the associated username.
+/// Uses `x-user-id` extraction and returns immutable username + mutable display_name.
 pub async fn me_handler(
     State(state): State<AppState>,
     UserId(user_id): UserId,
 ) -> Result<Json<AuthResponse>, ApiError> {
-    let row: Option<(String,)> = sqlx::query_as("SELECT username FROM users WHERE id = $1")
+    let row: Option<(String, String)> = sqlx::query_as(
+        "SELECT username, display_name
+         FROM users
+         WHERE id = $1",
+    )
         .bind(user_id as i64)
         .fetch_optional(&state.db)
         .await
         .map_err(db_err)?;
 
-    let (username,) = row.ok_or_else(|| unauthorized("invalid x-user-id"))?;
-    Ok(Json(auth_response(user_id, username)))
+    let (username, display_name) = row.ok_or_else(|| unauthorized("invalid x-user-id"))?;
+    Ok(Json(auth_response(user_id, username, display_name)))
 }
 
 /// GET /api/auth/users
@@ -233,7 +239,7 @@ pub async fn users_handler(
     UserId(_caller_id): UserId,
 ) -> Result<Json<Vec<UserListItem>>, ApiError> {
     let rows: Vec<(i64, String)> = sqlx::query_as(
-        "SELECT id, username
+        "SELECT id, display_name
          FROM users
          WHERE id > 0
          ORDER BY id ASC",
@@ -244,10 +250,10 @@ pub async fn users_handler(
 
     let users = rows
         .into_iter()
-        .filter_map(|(id, username)| {
+        .filter_map(|(id, display_name)| {
             u64::try_from(id).ok().map(|uid| UserListItem {
                 user_id: uid.to_string(),
-                username,
+                display_name,
             })
         })
         .collect();
@@ -255,38 +261,22 @@ pub async fn users_handler(
     Ok(Json(users))
 }
 
-/// PUT /api/auth/username
+/// PUT /api/auth/display-name
 ///
-/// Updates the authenticated user's username.
-pub async fn update_username_handler(
+/// Updates the authenticated user's display name.
+pub async fn update_display_name_handler(
     State(state): State<AppState>,
     UserId(user_id): UserId,
-    Json(body): Json<UpdateUsernameRequest>,
+    Json(body): Json<UpdateDisplayNameRequest>,
 ) -> Result<Json<AuthResponse>, ApiError> {
-    let username = normalize_username(&body.username)?;
-
-    let existing: Option<(i64,)> = sqlx::query_as(
-        "SELECT 1
-         FROM users
-         WHERE username = $1 AND id <> $2
-         LIMIT 1",
-    )
-    .bind(&username)
-    .bind(user_id as i64)
-    .fetch_optional(&state.db)
-    .await
-    .map_err(db_err)?;
-
-    if existing.is_some() {
-        return Err(conflict("username already exists"));
-    }
+    let display_name = normalize_display_name(&body.display_name)?;
 
     let updated = sqlx::query(
         "UPDATE users
-         SET username = $1
+         SET display_name = $1
          WHERE id = $2",
     )
-    .bind(&username)
+    .bind(&display_name)
     .bind(user_id as i64)
     .execute(&state.db)
     .await
@@ -296,7 +286,18 @@ pub async fn update_username_handler(
         return Err(unauthorized("invalid x-user-id"));
     }
 
-    Ok(Json(auth_response(user_id, username)))
+    let row: Option<(String,)> = sqlx::query_as(
+        "SELECT username
+         FROM users
+         WHERE id = $1",
+    )
+    .bind(user_id as i64)
+    .fetch_optional(&state.db)
+    .await
+    .map_err(db_err)?;
+
+    let (username,) = row.ok_or_else(|| unauthorized("invalid x-user-id"))?;
+    Ok(Json(auth_response(user_id, username, display_name)))
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -348,6 +349,28 @@ fn normalize_username(raw: &str) -> Result<String, ApiError> {
     Ok(username)
 }
 
+fn normalize_display_name(raw: &str) -> Result<String, ApiError> {
+    let display_name = raw.trim();
+    if display_name.len() < 3 || display_name.len() > 32 {
+        return Err(err(
+            StatusCode::BAD_REQUEST,
+            "display_name length must be between 3 and 32 characters",
+        ));
+    }
+
+    if !display_name
+        .bytes()
+        .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-' || b == b' ')
+    {
+        return Err(err(
+            StatusCode::BAD_REQUEST,
+            "display_name may only contain [a-zA-Z0-9_ -]",
+        ));
+    }
+
+    Ok(display_name.to_string())
+}
+
 fn validate_password(password: &str) -> Result<(), ApiError> {
     if password.len() < 8 || password.len() > 128 {
         return Err(err(
@@ -376,10 +399,11 @@ fn verify_password(password: &str, password_hash: &str) -> Result<(), ApiError> 
         .map_err(|_| unauthorized("invalid username or password"))
 }
 
-fn auth_response(user_id: u64, username: String) -> AuthResponse {
+fn auth_response(user_id: u64, username: String, display_name: String) -> AuthResponse {
     AuthResponse {
         user_id: user_id.to_string(),
         username,
+        display_name,
         auth_mode: "x-user-id".to_string(),
         auth_header: format!("x-user-id: {user_id}"),
     }
