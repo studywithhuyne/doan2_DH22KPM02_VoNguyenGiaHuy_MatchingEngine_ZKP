@@ -1,5 +1,5 @@
-import { derived, writable } from "svelte/store";
-import { fetchAuthMe, postLogin, postRegister } from "../lib/api/client";
+import { derived, get, writable } from "svelte/store";
+import { fetchAuthMe, postLogin, postRegister, putAuthUsername } from "../lib/api/client";
 
 type AuthStoreState = {
   userId: string | null;
@@ -61,6 +61,17 @@ export async function login(username: string, password: string): Promise<void> {
 
 export async function register(username: string, password: string): Promise<void> {
   const res = await postRegister(username, password);
+  setAuthenticated(res.user_id, res.username);
+}
+
+export async function updateUsername(username: string): Promise<void> {
+  const currentUserId = get(store).userId;
+
+  if (!currentUserId) {
+    throw new Error("Not authenticated");
+  }
+
+  const res = await putAuthUsername(currentUserId, username);
   setAuthenticated(res.user_id, res.username);
 }
 

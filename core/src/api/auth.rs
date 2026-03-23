@@ -44,6 +44,11 @@ pub struct LoginRequest {
     pub password: String,
 }
 
+#[derive(Deserialize)]
+pub struct UpdateUsernameRequest {
+    pub username: String,
+}
+
 #[derive(Serialize)]
 pub struct AuthResponse {
     pub user_id: String,
@@ -248,6 +253,50 @@ pub async fn users_handler(
         .collect();
 
     Ok(Json(users))
+}
+
+/// PUT /api/auth/username
+///
+/// Updates the authenticated user's username.
+pub async fn update_username_handler(
+    State(state): State<AppState>,
+    UserId(user_id): UserId,
+    Json(body): Json<UpdateUsernameRequest>,
+) -> Result<Json<AuthResponse>, ApiError> {
+    let username = normalize_username(&body.username)?;
+
+    let existing: Option<(i64,)> = sqlx::query_as(
+        "SELECT 1
+         FROM users
+         WHERE username = $1 AND id <> $2
+         LIMIT 1",
+    )
+    .bind(&username)
+    .bind(user_id as i64)
+    .fetch_optional(&state.db)
+    .await
+    .map_err(db_err)?;
+
+    if existing.is_some() {
+        return Err(conflict("username already exists"));
+    }
+
+    let updated = sqlx::query(
+        "UPDATE users
+         SET username = $1
+         WHERE id = $2",
+    )
+    .bind(&username)
+    .bind(user_id as i64)
+    .execute(&state.db)
+    .await
+    .map_err(db_err)?;
+
+    if updated.rows_affected() == 0 {
+        return Err(unauthorized("invalid x-user-id"));
+    }
+
+    Ok(Json(auth_response(user_id, username)))
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

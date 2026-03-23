@@ -33,6 +33,7 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/auth/login",    post(auth::login_handler))
         .route("/api/auth/me",       get(auth::me_handler))
         .route("/api/auth/users",    get(auth::users_handler))
+        .route("/api/auth/username", put(auth::update_username_handler))
         // API-03: order management
         .route("/api/orders",      post(orders::place_order))
         .route("/api/orders/open", get(data::open_orders_handler))

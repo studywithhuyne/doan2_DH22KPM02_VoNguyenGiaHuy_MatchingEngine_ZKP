@@ -42,6 +42,28 @@ export async function apiPost<T = unknown>(
   return response.json() as Promise<T>;
 }
 
+export async function apiPut<T = unknown>(
+  path: string,
+  body: unknown,
+  userId: AuthUserId = 1,
+): Promise<T> {
+  const response = await fetch(path, {
+    method: "PUT",
+    headers: {
+      ...DEFAULT_HEADERS,
+      "x-user-id": String(userId),
+    },
+    body: JSON.stringify(body),
+  });
+
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({ error: `HTTP ${response.status}` }));
+    throw new Error(err.error || `PUT ${path} failed`);
+  }
+
+  return response.json() as Promise<T>;
+}
+
 export async function apiDelete(path: string, userId: AuthUserId = 1): Promise<void> {
   const response = await fetch(path, {
     method: "DELETE",
@@ -203,6 +225,9 @@ export const postRegister = (username: string, password: string) =>
 
 export const fetchAuthMe = (userId: AuthUserId) =>
   apiGet<AuthResponse>("/api/auth/me", userId);
+
+export const putAuthUsername = (userId: AuthUserId, username: string) =>
+  apiPut<AuthResponse>("/api/auth/username", { username }, userId);
 
 export const fetchUsers = (userId: AuthUserId) =>
   apiGet<UserListItem[]>("/api/auth/users", userId);

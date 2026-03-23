@@ -1,7 +1,7 @@
 <script lang="ts">
   import { router } from "../../stores/routerStore";
   import { connectionState } from "../../stores/appStore";
-  import { authState, logout } from "../../stores/authStore";
+  import { authState, logout, updateUsername } from "../../stores/authStore";
   import type { Route } from "../../stores/routerStore";
 
   const PUBLIC_LINKS: { route: Route; label: string }[] = [
@@ -15,6 +15,24 @@
     { route: "/wallet", label: "Wallet" },
     { route: "/zk-verify", label: "ZK Verify" },
   ];
+
+  async function handleEditUsername() {
+    const current = $authState.username ?? "";
+    const next = window.prompt("Enter new username (a-z0-9_-)", current);
+    if (!next) return;
+
+    try {
+      await updateUsername(next);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to update username";
+      window.alert(message);
+    }
+  }
+
+  function handleLogout() {
+    logout();
+    router.navigate("/login");
+  }
 </script>
 
 <nav class="terminal-panel px-4 py-3 sm:px-6">
@@ -58,20 +76,45 @@
     <!-- User + Status -->
     <div class="flex items-center gap-3 shrink-0">
       {#if $authState.userId}
-        <div class="mono rounded-lg border border-slate-700/80 bg-slate-900/80 px-2.5 py-1.5 text-xs text-slate-100">
-          {$authState.username}
-        </div>
+        <div class="relative group/user-menu">
+          <button
+            type="button"
+            class="mono rounded-lg border border-slate-700/80 bg-slate-900/80 px-2.5 py-1.5 text-xs text-slate-100 transition hover:border-slate-500"
+          >
+            {$authState.username}
+          </button>
 
-        <button
-          type="button"
-          class="rounded-lg border border-slate-700/80 bg-slate-900/80 px-2.5 py-1.5 text-xs text-slate-100 transition hover:border-slate-500"
-          onclick={() => {
-            logout();
-            router.navigate("/login");
-          }}
-        >
-          Logout
-        </button>
+          <div
+            class="invisible absolute right-0 top-[calc(100%+0.45rem)] z-40 w-56 rounded-lg border border-slate-700/80 bg-slate-950/95 p-1.5 opacity-0 shadow-xl shadow-black/40 transition-all duration-150 group-hover/user-menu:visible group-hover/user-menu:opacity-100 group-focus-within/user-menu:visible group-focus-within/user-menu:opacity-100"
+          >
+            <div class="mb-1.5 rounded-md border border-slate-800 bg-slate-900/70 px-2 py-1.5">
+              <p class="text-[10px] uppercase tracking-wider text-slate-500">Signed in</p>
+              <p class="mono text-xs text-slate-200">{$authState.username}</p>
+              <p class="mono text-[10px] text-cyan-300">ID: {$authState.userId}</p>
+            </div>
+
+            <a href="#/" class="block rounded-md px-2 py-1.5 text-xs text-slate-300 transition hover:bg-slate-800/80 hover:text-sky-300">Dashboard</a>
+            <a href="#/asset" class="block rounded-md px-2 py-1.5 text-xs text-slate-300 transition hover:bg-slate-800/80 hover:text-sky-300">Asset</a>
+            <a href="#/wallet" class="block rounded-md px-2 py-1.5 text-xs text-slate-300 transition hover:bg-slate-800/80 hover:text-sky-300">Wallet</a>
+            <a href="#/trade-history" class="block rounded-md px-2 py-1.5 text-xs text-slate-300 transition hover:bg-slate-800/80 hover:text-sky-300">Trade History</a>
+
+            <button
+              type="button"
+              class="mt-1 block w-full rounded-md px-2 py-1.5 text-left text-xs text-amber-300 transition hover:bg-slate-800/80"
+              onclick={handleEditUsername}
+            >
+              Edit User Name
+            </button>
+
+            <button
+              type="button"
+              class="block w-full rounded-md px-2 py-1.5 text-left text-xs text-rose-300 transition hover:bg-slate-800/80"
+              onclick={handleLogout}
+            >
+              Logout
+            </button>
+          </div>
+        </div>
       {/if}
 
       <div class="flex items-center gap-1.5" title="WebSocket: {$connectionState.ws}">
