@@ -6,7 +6,6 @@
   import Navbar from "./components/layout/Navbar.svelte";
   import LoginPage from "./components/pages/LoginPage.svelte";
   import LandingPage from "./components/pages/LandingPage.svelte";
-  import DashboardPage from "./components/pages/DashboardPage.svelte";
   import TradePage from "./components/pages/TradePage.svelte";
   import AssetPage from "./components/pages/AssetPage.svelte";
   import TradeHistoryPage from "./components/pages/TradeHistoryPage.svelte";
@@ -16,7 +15,7 @@
   import AdminLoginPage from "./components/pages/AdminLoginPage.svelte";
   import { adminAuthState, bootstrapAdminAuth } from "./stores/adminAuthStore";
 
-  const AUTH_REQUIRED_ROUTES = new Set(["/trade", "/asset", "/trade-history", "/zk-verify", "/testing", "/user-dashboard"]);
+  const AUTH_REQUIRED_ROUTES = new Set(["/trade", "/asset", "/trade-history", "/zk-verify", "/testing"]);
 
   onMount(async () => {
     orderBook.connect();
@@ -68,8 +67,6 @@
       <LandingPage />
     {:else if $router === "/login"}
       <LoginPage />
-    {:else if $router === "/user-dashboard"}
-      <DashboardPage />
     {:else if $router === "/trade"}
       <TradePage />
     {:else if $router === "/asset"}

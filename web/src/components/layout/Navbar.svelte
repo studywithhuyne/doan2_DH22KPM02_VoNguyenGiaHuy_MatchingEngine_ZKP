@@ -92,8 +92,6 @@
               <p class="mono text-[10px] text-cyan-300">ID: {$authState.userId}</p>
             </div>
 
-            <a href="#/" class="block rounded-md px-2 py-1.5 text-xs text-slate-300 transition hover:bg-slate-800/80 hover:text-sky-300">Markets</a>
-            <a href="#/user-dashboard" class="block rounded-md px-2 py-1.5 text-xs text-slate-300 transition hover:bg-slate-800/80 hover:text-sky-300">User Dashboard</a>
             <a href="#/asset" class="block rounded-md px-2 py-1.5 text-xs text-slate-300 transition hover:bg-slate-800/80 hover:text-sky-300">Asset</a>
             <a href="#/trade-history" class="block rounded-md px-2 py-1.5 text-xs text-slate-300 transition hover:bg-slate-800/80 hover:text-sky-300">Trade History</a>
 
