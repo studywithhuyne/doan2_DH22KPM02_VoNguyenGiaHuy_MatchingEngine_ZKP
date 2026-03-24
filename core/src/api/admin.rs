@@ -48,6 +48,7 @@ pub async fn admin_metrics_handler(
 #[derive(Serialize)]
 pub struct TreasuryMetrics {
     pub exchange_capital: String,
+    pub exchange_revenue: String,
     pub total_user_liabilities: String,
     pub total_exchange_funds: String,
     pub solvency_ratio: String,
@@ -57,6 +58,7 @@ pub async fn admin_treasury_handler(
     State(state): State<AppState>,
 ) -> Result<Json<TreasuryMetrics>, (StatusCode, String)> {
     let base_capital = state.exchange_funds.lock().base_capital_usdt;
+    let exchange_revenue = state.ledger.lock().exchange_revenue_by_asset("USDT");
 
     let liab: Option<Decimal> = sqlx::query_scalar(
         "SELECT SUM(available + locked) FROM balances WHERE asset_symbol = 'USDT'"
@@ -66,7 +68,7 @@ pub async fn admin_treasury_handler(
     .unwrap_or(Some(Decimal::ZERO));
 
     let total_liabilities = liab.unwrap_or(Decimal::ZERO);
-    let total_exchange_funds = base_capital + total_liabilities;
+    let total_exchange_funds = base_capital + exchange_revenue;
 
     let solvency_ratio = if total_liabilities > Decimal::ZERO {
         (total_exchange_funds / total_liabilities).to_string()
@@ -76,6 +78,7 @@ pub async fn admin_treasury_handler(
 
     Ok(Json(TreasuryMetrics {
         exchange_capital: base_capital.to_string(),
+        exchange_revenue: exchange_revenue.to_string(),
         total_exchange_funds: total_exchange_funds.to_string(),
         total_user_liabilities: total_liabilities.to_string(),
         solvency_ratio,

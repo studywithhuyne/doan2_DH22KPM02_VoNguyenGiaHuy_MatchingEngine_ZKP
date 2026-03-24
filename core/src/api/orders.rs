@@ -56,6 +56,10 @@ struct MarketRow {
 /// Maximum allowed deviation from reference price (in basis points).
 /// 2000 bps = 20%.
 const MAX_PRICE_DEVIATION_BPS: i64 = 2_000;
+/// Default maker/taker fee rates used by live settlement.
+/// 0.001 = 0.10% (maker), 0.002 = 0.20% (taker).
+const MAKER_FEE_RATE_MILLIS: i64 = 1;
+const TAKER_FEE_RATE_MILLIS: i64 = 2;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Request / Response types
@@ -175,10 +179,12 @@ pub async fn place_order(
     };
         {
             let mut ledger = state.ledger.lock();
+            let maker_fee_rate = Decimal::new(MAKER_FEE_RATE_MILLIS, 3);
+            let taker_fee_rate = Decimal::new(TAKER_FEE_RATE_MILLIS, 3);
             for trade in &trades {
                 ledger
-                    .apply_trade_fill(trade)
-                    .map_err(internal_ledger_error)?;
+                    .settle_trade(trade, maker_fee_rate, taker_fee_rate)
+                    .map_err(|e| internal_ledger_error(LedgerError::SettlementFailed(e)))?;
             }
         }
 

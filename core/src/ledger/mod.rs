@@ -19,7 +19,7 @@ pub struct UserBalanceSnapshot {
     pub locked: Decimal,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 struct Reservation {
     side: Side,
     user_id: u64,
@@ -29,6 +29,9 @@ struct Reservation {
     remaining: Decimal,
     internal_id: String,
 }
+
+const EXCHANGE_REVENUE_ACCOUNT: &str = "EXCHANGE_REVENUE";
+const EXCHANGE_REVENUE_USER_ID: u64 = 0;
 
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum LedgerError {
@@ -52,9 +55,12 @@ pub enum LedgerError {
 
     #[error("invalid user id in balances snapshot")]
     InvalidUserId,
+
+    #[error("settlement failed: {0}")]
+    SettlementFailed(String),
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct InMemoryLedger {
     balances: HashMap<(u64, String), BalanceState>,
     reservations: HashMap<u64, Reservation>,
@@ -133,8 +139,36 @@ impl InMemoryLedger {
     }
 
     pub fn apply_trade_fill(&mut self, trade: &Trade) -> Result<(), LedgerError> {
-        self.apply_fill_for_order(trade.maker_order_id, trade.amount, trade.price)?;
-        self.apply_fill_for_order(trade.taker_order_id, trade.amount, trade.price)?;
+        self
+            .settle_trade(trade, Decimal::ZERO, Decimal::ZERO)
+            .map_err(LedgerError::SettlementFailed)
+    }
+
+    /// Settle a trade using maker-taker fees.
+    ///
+    /// Fees are charged from the received asset:
+    /// - buyer pays in base asset received
+    /// - seller pays in quote asset received
+    ///
+    /// Settlement is atomic: no state is committed unless the entire operation succeeds.
+    pub fn settle_trade(
+        &mut self,
+        trade: &Trade,
+        maker_fee_rate: Decimal,
+        taker_fee_rate: Decimal,
+    ) -> Result<(), String> {
+        if maker_fee_rate.is_sign_negative() || taker_fee_rate.is_sign_negative() {
+            return Err("fee rates must be non-negative".to_string());
+        }
+        if maker_fee_rate > Decimal::ONE || taker_fee_rate > Decimal::ONE {
+            return Err("fee rates must be <= 1".to_string());
+        }
+
+        let mut staged = self.clone();
+        staged
+            .settle_trade_in_place(trade, maker_fee_rate, taker_fee_rate)
+            .map_err(|e| e.to_string())?;
+        *self = staged;
         Ok(())
     }
 
@@ -156,6 +190,14 @@ impl InMemoryLedger {
 
         out.sort_by(|a, b| a.asset.cmp(&b.asset));
         out
+    }
+
+    pub fn exchange_revenue_by_asset(&self, asset: &str) -> Decimal {
+        let synthetic_asset = format!("{}:{}", EXCHANGE_REVENUE_ACCOUNT, asset);
+        self.balances
+            .get(&(EXCHANGE_REVENUE_USER_ID, synthetic_asset))
+            .map(|state| state.free)
+            .unwrap_or(Decimal::ZERO)
     }
 
     pub fn deposit(&mut self, user_id: u64, asset: &str, amount: Decimal) -> Result<Decimal, LedgerError> {
@@ -194,7 +236,24 @@ impl InMemoryLedger {
         Ok(entry.free)
     }
 
-    fn apply_fill_for_order(&mut self, order_id: u64, fill_qty: Decimal, exec_price: Decimal) -> Result<(), LedgerError> {
+    fn settle_trade_in_place(
+        &mut self,
+        trade: &Trade,
+        maker_fee_rate: Decimal,
+        taker_fee_rate: Decimal,
+    ) -> Result<(), LedgerError> {
+        self.settle_fill_for_order(trade.maker_order_id, trade.amount, trade.price, maker_fee_rate)?;
+        self.settle_fill_for_order(trade.taker_order_id, trade.amount, trade.price, taker_fee_rate)?;
+        Ok(())
+    }
+
+    fn settle_fill_for_order(
+        &mut self,
+        order_id: u64,
+        fill_qty: Decimal,
+        exec_price: Decimal,
+        fee_rate: Decimal,
+    ) -> Result<(), LedgerError> {
         let reservation = self
             .reservations
             .get(&order_id)
@@ -219,12 +278,24 @@ impl InMemoryLedger {
                 if refund > Decimal::ZERO {
                     self.increase_free(reservation.user_id, &reservation.quote_asset, refund);
                 }
-                self.increase_free(reservation.user_id, &reservation.base_asset, fill_qty);
+
+                let fee_amount = fill_qty * fee_rate;
+                let net_base = fill_qty - fee_amount;
+                self.increase_free(reservation.user_id, &reservation.base_asset, net_base);
+                if fee_amount > Decimal::ZERO {
+                    self.credit_exchange_revenue(&reservation.base_asset, fee_amount);
+                }
             }
             Side::Sell => {
                 let proceeds = exec_price * fill_qty;
                 self.decrease_locked(reservation.user_id, &reservation.base_asset, fill_qty)?;
-                self.increase_free(reservation.user_id, &reservation.quote_asset, proceeds);
+
+                let fee_amount = proceeds * fee_rate;
+                let net_quote = proceeds - fee_amount;
+                self.increase_free(reservation.user_id, &reservation.quote_asset, net_quote);
+                if fee_amount > Decimal::ZERO {
+                    self.credit_exchange_revenue(&reservation.quote_asset, fee_amount);
+                }
             }
         }
 
@@ -308,6 +379,11 @@ impl InMemoryLedger {
                 locked: Decimal::ZERO,
             });
         entry.free += amount;
+    }
+
+    fn credit_exchange_revenue(&mut self, asset: &str, amount: Decimal) {
+        let synthetic_asset = format!("{}:{}", EXCHANGE_REVENUE_ACCOUNT, asset);
+        self.increase_free(EXCHANGE_REVENUE_USER_ID, &synthetic_asset, amount);
     }
 
     fn next_internal_id(&mut self, seed_order_id: u64) -> String {
@@ -425,5 +501,106 @@ mod tests {
                 available,
             } if asset == "USDT" && required == dec!(150) && available == dec!(100)
         ));
+    }
+
+    #[test]
+    fn settle_trade_charges_maker_taker_fees_on_received_assets() {
+        let rows = vec![
+            (1_i64, "USDT".to_string(), dec!(1000), dec!(0)),
+            (1_i64, "BTC".to_string(), dec!(0), dec!(0)),
+            (2_i64, "BTC".to_string(), dec!(2), dec!(0)),
+            (2_i64, "USDT".to_string(), dec!(0), dec!(0)),
+        ];
+        let mut ledger = InMemoryLedger::from_rows(&rows).unwrap();
+
+        // maker sells, taker buys
+        let taker = Order::new(100, 1, "BTC_USDT", Side::Buy, dec!(105), dec!(1));
+        let maker = Order::new(99, 2, "BTC_USDT", Side::Sell, dec!(100), dec!(1));
+
+        ledger.reserve_for_new_order(&maker, "BTC", "USDT").unwrap();
+        ledger.reserve_for_new_order(&taker, "BTC", "USDT").unwrap();
+
+        let trade = Trade {
+            maker_order_id: 99,
+            taker_order_id: 100,
+            symbol: "BTC_USDT".to_string(),
+            price: dec!(100),
+            amount: dec!(1),
+        };
+
+        ledger
+            .settle_trade(&trade, dec!(0.001), dec!(0.002))
+            .unwrap();
+
+        let buyer_usdt = ledger
+            .balances_for_user(1)
+            .into_iter()
+            .find(|b| b.asset == "USDT")
+            .unwrap();
+        let buyer_btc = ledger
+            .balances_for_user(1)
+            .into_iter()
+            .find(|b| b.asset == "BTC")
+            .unwrap();
+        let seller_usdt = ledger
+            .balances_for_user(2)
+            .into_iter()
+            .find(|b| b.asset == "USDT")
+            .unwrap();
+
+        // buyer reserved 105 USDT, spent 100, refunded 5; receives 1 BTC minus taker fee 0.002 BTC
+        assert_eq!(buyer_usdt.free, dec!(900));
+        assert_eq!(buyer_usdt.locked, dec!(0));
+        assert_eq!(buyer_btc.free, dec!(0.998));
+
+        // seller receives 100 USDT minus maker fee 0.1 USDT
+        assert_eq!(seller_usdt.free, dec!(99.9));
+
+        let revenue_usdt = ledger
+            .balances
+            .get(&(EXCHANGE_REVENUE_USER_ID, "EXCHANGE_REVENUE:USDT".to_string()))
+            .copied()
+            .unwrap();
+        let revenue_btc = ledger
+            .balances
+            .get(&(EXCHANGE_REVENUE_USER_ID, "EXCHANGE_REVENUE:BTC".to_string()))
+            .copied()
+            .unwrap();
+
+        assert_eq!(revenue_usdt.free, dec!(0.1));
+        assert_eq!(revenue_btc.free, dec!(0.002));
+    }
+
+    #[test]
+    fn settle_trade_is_atomic_when_validation_fails() {
+        let rows = vec![
+            (1_i64, "USDT".to_string(), dec!(1000), dec!(0)),
+            (1_i64, "BTC".to_string(), dec!(0), dec!(0)),
+            (2_i64, "BTC".to_string(), dec!(2), dec!(0)),
+            (2_i64, "USDT".to_string(), dec!(0), dec!(0)),
+        ];
+        let mut ledger = InMemoryLedger::from_rows(&rows).unwrap();
+
+        let taker = Order::new(100, 1, "BTC_USDT", Side::Buy, dec!(100), dec!(1));
+        let maker = Order::new(99, 2, "BTC_USDT", Side::Sell, dec!(100), dec!(1));
+
+        ledger.reserve_for_new_order(&maker, "BTC", "USDT").unwrap();
+        ledger.reserve_for_new_order(&taker, "BTC", "USDT").unwrap();
+
+        let balances_before = ledger.balances.clone();
+        let reservations_before = ledger.reservations.clone();
+
+        let trade = Trade {
+            maker_order_id: 99,
+            taker_order_id: 100,
+            symbol: "BTC_USDT".to_string(),
+            price: dec!(100),
+            amount: dec!(1),
+        };
+
+        let err = ledger.settle_trade(&trade, dec!(0.01), dec!(1.2)).unwrap_err();
+        assert!(err.contains("fee rates must be <= 1"));
+        assert_eq!(ledger.balances, balances_before);
+        assert_eq!(ledger.reservations, reservations_before);
     }
 }

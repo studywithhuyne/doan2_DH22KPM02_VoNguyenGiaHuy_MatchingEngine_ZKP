@@ -294,7 +294,13 @@ export const fetchUsers = (userId: AuthUserId) =>
 
 // -- Admin Endpoints --
 export type AdminMetrics = { volume_24h_usdt: string; total_users: number; active_orders: number; };
-export type TreasuryMetrics = { exchange_capital: string; total_exchange_funds: string; total_user_liabilities: string; solvency_ratio: string; };
+export type TreasuryMetrics = {
+  exchange_capital: string;
+  exchange_revenue: string;
+  total_exchange_funds: string;
+  total_user_liabilities: string;
+  solvency_ratio: string;
+};
 export type AdminAssetDto = { symbol: string; name: string; decimals: number; is_active: boolean; };
 export type AdminUserDto = { user_id: number; username: string; is_suspended: boolean; };
 export type ZkSnapshotDto = { snapshot_id: string; root_hash: string; users_included: number; created_at: string; };
