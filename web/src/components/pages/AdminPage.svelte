@@ -47,6 +47,31 @@
   const DASHBOARD_REFRESH_MS = 2000;
   let dashboardRefreshTimer: ReturnType<typeof setInterval> | null = null;
 
+  function formatDecimalString(value: string, fractionDigits: number = 3): string {
+    const raw = value.trim();
+    if (!raw) return "0";
+
+    const sign = raw.startsWith("-") ? "-" : "";
+    const normalized = sign ? raw.slice(1) : raw;
+    const [intPartRaw, fracPartRaw = ""] = normalized.split(".");
+
+    // Fallback for unexpected payload format.
+    if (!/^\d+$/.test(intPartRaw || "0") || (fracPartRaw && !/^\d+$/.test(fracPartRaw))) {
+      return value;
+    }
+
+    const intPart = (intPartRaw || "0").replace(/^0+(?=\d)/, "");
+    const groupedInt = intPart.replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+    const fracPart = fracPartRaw.slice(0, Math.max(0, fractionDigits)).replace(/0+$/, "");
+
+    return fracPart.length > 0 ? `${sign}${groupedInt}.${fracPart}` : `${sign}${groupedInt}`;
+  }
+
+  function formatSolvencyRatio(value: string): string {
+    if (value === "infinity") return "infinity";
+    return formatDecimalString(value, 4);
+  }
+
   function stopDashboardRefresh() {
     if (dashboardRefreshTimer) {
       clearInterval(dashboardRefreshTimer);
@@ -262,7 +287,7 @@
           <div class="space-y-4">
             <div class="flex justify-between items-center bg-slate-900/50 p-3 rounded border border-slate-800/50">
               <span class="text-sm text-slate-400">24h Volume (USDT)</span>
-              <span class="text-sm font-bold text-sky-400 mono">${parseFloat(metrics.volume_24h_usdt).toLocaleString()}</span>
+              <span class="text-sm font-bold text-sky-400 mono">${formatDecimalString(metrics.volume_24h_usdt)}</span>
             </div>
             <div class="flex justify-between items-center bg-slate-900/50 p-3 rounded border border-slate-800/50">
               <span class="text-sm text-slate-400">Total Users</span>
@@ -284,23 +309,23 @@
           <div class="space-y-4">
             <div class="flex justify-between items-center bg-slate-900/50 p-3 rounded border border-slate-800/50">
               <span class="text-sm text-slate-400">Exchange Base Capital</span>
-              <span class="text-sm font-bold text-sky-400 mono">${parseFloat(treasury.exchange_capital).toLocaleString()}</span>
+              <span class="text-sm font-bold text-sky-400 mono">${formatDecimalString(treasury.exchange_capital)}</span>
             </div>
             <div class="flex justify-between items-center bg-slate-900/50 p-3 rounded border border-slate-800/50">
               <span class="text-sm text-slate-400">Exchange Revenue (Trading Fees)</span>
-              <span class="text-sm font-bold text-amber-300 mono">${parseFloat(treasury.exchange_revenue).toLocaleString()}</span>
+              <span class="text-sm font-bold text-amber-300 mono">${formatDecimalString(treasury.exchange_revenue)}</span>
             </div>
             <div class="flex justify-between items-center bg-slate-900/50 p-3 rounded border border-slate-800/50">
               <span class="text-sm text-slate-400">Total Liabilities</span>
-              <span class="text-sm font-bold text-rose-400 mono">${parseFloat(treasury.total_user_liabilities).toLocaleString()}</span>
+              <span class="text-sm font-bold text-rose-400 mono">${formatDecimalString(treasury.total_user_liabilities)}</span>
             </div>
             <div class="flex justify-between items-center bg-slate-900/50 p-3 rounded border border-slate-800/50 mt-2">
               <span class="text-sm text-slate-400 font-medium">Total Exchange Assets (Capital + Revenue)</span>
-              <span class="text-sm font-bold text-emerald-400 mono">${parseFloat(treasury.total_exchange_funds).toLocaleString()}</span>
+              <span class="text-sm font-bold text-emerald-400 mono">${formatDecimalString(treasury.total_exchange_funds)}</span>
             </div>
             <div class="flex justify-between items-center bg-slate-900/50 p-3 rounded border border-slate-800/50">
               <span class="text-sm text-slate-400">Solvency Ratio</span>
-              <span class="text-sm font-bold text-sky-400 mono">{parseFloat(treasury.solvency_ratio).toFixed(4)}</span>
+              <span class="text-sm font-bold text-sky-400 mono">{formatSolvencyRatio(treasury.solvency_ratio)}</span>
             </div>
 
             <div class="mt-2 rounded border border-slate-800/50 bg-slate-900/40 p-3">
